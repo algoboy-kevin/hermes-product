@@ -56,9 +56,9 @@ A1 to A33, all `not_run`; each belongs to exactly one requirement (see the Req c
 | S1 | draft | [Data model](specs/S1-data-model.md) |
 | S2 | draft | [Status rules and lint](specs/S2-status-and-lint.md) |
 | S3 | draft | [Text export and import](specs/S3-text-export.md) |
-| S4 | draft | [Tool behavior](specs/S4-tool-behavior.md) |
-| S5 | draft | [External links](specs/S5-external-links.md) |
-| S6 | draft | [Markdown conventions](specs/S6-markdown-conventions.md) |
+| S4 | draft | [Tool behavior (for the LLM)](specs/S4-tool-behavior.md) |
+| S5 | draft | [External links (kanban and others)](specs/S5-external-links.md) |
+| S6 | draft | [Markdown conventions (documents-first phase)](specs/S6-markdown-conventions.md) |
 
 ## Supporting documents
 

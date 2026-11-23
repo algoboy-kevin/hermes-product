@@ -21,12 +21,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import code_coverage, docs_text, export, graph, lint, model, plan, scan, store
+    from . import (code_coverage, docs_text, export, external, graph, importmd, lint, model,
+                   plan, scan, store)
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
     import export  # type: ignore[no-redef]
+    import external  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
+    import importmd  # type: ignore[no-redef]
     import lint  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import plan  # type: ignore[no-redef]
@@ -57,16 +60,18 @@ VERB_CARDS: dict[str, str] = {
     "next": "HP-6",
     "lint": "HP-7",
     "scan-prd": "HP-8",
+    "import-md": "HP-10",
+    "sync": "HP-12",
 }
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
 # Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
 # HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
-# HP-6: trace and next; HP-7: lint; HP-8: scan-prd).
+# HP-6: trace and next; HP-7: lint; HP-8: scan-prd; HP-10: import-md; HP-12: sync).
 IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
-               "lint", "scan-prd"}
+               "lint", "scan-prd", "import-md", "sync"}
 
 SEP = "  "
 
@@ -236,6 +241,32 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_import.add_argument("--as", dest="as_slug", default=None, metavar="SLUG",
                           help="Create the project under this slug instead of the"
                                " one in project.yaml")
+
+    p_import_md = subs.add_parser(
+        "import-md",
+        help="Import the S6 markdown documents of a docs directory into an existing"
+             " project (S6): entries, links and DOC bodies, ids preserved",
+    )
+    p_import_md.add_argument("dir", metavar="DIR", help="The docs directory to import")
+    p_import_md.add_argument("--dry-run", dest="dry_run", action="store_true",
+                             default=False,
+                             help="Parse and cross-check only; write nothing")
+    _add_project_option(p_import_md)
+
+    p_sync = subs.add_parser(
+        "sync",
+        help="Read kanban boards (read-only) and propose external links plus forward"
+             " execution status moves (S5); nothing is written without --apply",
+    )
+    p_sync.add_argument("--board", dest="board", action="append", required=True,
+                        metavar="SLUG", help="A kanban board to read (repeatable)")
+    p_sync.add_argument("--map", dest="map", action="append", default=[],
+                        metavar="COLUMN=STATUS",
+                        help="Map a board column to approved|in_progress|implemented"
+                             " (or none); repeatable")
+    p_sync.add_argument("--apply", dest="apply", action="store_true", default=False,
+                        help="Write the link rows and the forward status moves")
+    _add_project_option(p_sync)
 
     subparser.set_defaults(func=product_command, _product_parser=subparser)
 
@@ -684,6 +715,42 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
 
 
+def _cmd_import_md(args: argparse.Namespace) -> int:
+    """`import-md DIR [--dry-run]` -> the counts line; cross-check problems exit 1 (A25)."""
+    project = args.project if args.project is not None else store.resolve_project()
+    result = importmd.import_markdown(args.dir, project, dry_run=args.dry_run)
+    counts = (f"{result['requirements']} requirements, {result['criteria']} criteria,"
+              f" {result['features']} features, {result['specs']} specs,"
+              f" {result['docs']} docs")
+    if result["problems"]:
+        for problem in result["problems"]:
+            print(problem)
+        return EXIT_ERROR
+    if args.dry_run:
+        print(f"import-md {project} (dry run): {counts}")
+        return EXIT_OK
+    print(f"import-md {project}: {counts} ({result['inserted']} inserted,"
+          f" {result['skipped']} skipped, {result['conflicts']} conflicts)")
+    for line in result["conflict_lines"]:
+        print(line)
+    for note in result["notes"]:
+        print(note)
+    return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
+
+
+def _cmd_sync(args: argparse.Namespace) -> int:
+    """`sync --board SLUG ... [--map C=S] [--apply]` -> proposals; refusals exit 3 (S5)."""
+    project = _project(args)
+    result = external.sync(project, args.board, overrides=args.map, apply=args.apply)
+    print(f"sync ({project}): {result['boards']} boards, {result['cards']} cards read,"
+          f" {result['with_lines']} with product lines")
+    for line in result["lines"]:
+        print(line)
+    if not args.apply:
+        print("proposal only: re-run with --apply to write")
+    return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
+
+
 # ------------------------------------------------------------------ trace (HP-6)
 def _trace_compact(item: dict) -> str:
     """A section entry's compact line; DOC lines drop the links column."""
@@ -969,6 +1036,8 @@ _IMPLEMENTED_HANDLERS = {
     "next": _cmd_next,
     "lint": _cmd_lint,
     "scan-prd": _cmd_scan_prd,
+    "import-md": _cmd_import_md,
+    "sync": _cmd_sync,
 }
 
 

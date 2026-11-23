@@ -49,6 +49,9 @@ EXPECTED_VERB_CARDS = {
     "next": "HP-6",
     "lint": "HP-7",
     "scan-prd": "HP-8",
+    # HP-10 and HP-12 add two verbs that are not in S4's table (S6 and S5 define them)
+    "import-md": "HP-10",
+    "sync": "HP-12",
 }
 
 # The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:

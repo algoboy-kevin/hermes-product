@@ -1,6 +1,6 @@
 # S4 Tool behavior (for the LLM)
 
-`draft | requirements R2,R5,R6,R7,R10,R11,R14 | features F2,F4,F5,F8`
+`draft | requirements R2,R5,R6,R7,R10,R11,R14,R17,R18 | features F2,F4,F5,F8,F11`
 
 ## 1. Compact output
 
