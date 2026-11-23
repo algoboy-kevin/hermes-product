@@ -327,3 +327,25 @@ def test_link_mentions_links_docs_to_the_entries_that_name_them(shop, capsys, tm
 def test_link_mentions_and_update_need_apply(shop, capsys, tmp_path) -> None:
     rc, _out, err = cli(capsys, "adopt", str(_ctx_tree(tmp_path / "r")), "--link-mentions")
     assert rc == 1 and "need --apply" in err
+
+
+@pytest.mark.parametrize("rel,pattern,expected", [
+    ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.md", True),
+    ("docs/ARCHITECTURE.md", "docs/*.md", True),
+    ("docs/specs/S1.md", "docs/*.md", False),                # * stays in one directory
+    ("docs/specs/S1.md", "docs/**", True),
+    ("docs/specs/S1.md", "**/S1.md", True),
+    ("S1.md", "**/S1.md", True),
+    ("docs/reviews/GMD-20.md", "docs/*/GMD-*.md", True),
+    ("docs/a.md", "docs/?.md", True),
+    ("docs/ab.md", "docs/?.md", False),
+    ("docs/x.mdx", "docs/*.md", False),
+])
+def test_glob_match(rel, pattern, expected) -> None:
+    assert adopt.glob_match(rel, pattern) is expected
+
+
+def test_only_star_does_not_reach_into_subdirectories(shop, capsys, tmp_path) -> None:
+    root = _ctx_tree(tmp_path / "repo")
+    rc, out, _e = cli(capsys, "adopt", str(root), "--only", "docs/*.md")
+    assert rc == 0 and "S1-core" not in out and "(plan): 4 new" in out

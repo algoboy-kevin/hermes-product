@@ -29,7 +29,6 @@ refreshes the body). Nothing is ever deleted.
 """
 from __future__ import annotations
 
-import fnmatch
 import hashlib
 import os
 import re
@@ -207,7 +206,7 @@ def plan(project: str, root: str | Path, con=None, only: Optional[list[str]] = N
     """Propose rows for ``root``: ``{"rows": [...], "skipped": [...]}``; writes nothing.
 
     ``only`` limits the pass to files whose relative path matches one of the glob
-    patterns (``docs/ARCHITECTURE.md``, ``docs/*.md``); the rest are not even listed.
+    patterns (``docs/ARCHITECTURE.md``, ``docs/*.md``; ``*`` stays in one directory, ``**`` crosses); the rest are not even listed.
     """
     base = Path(root).expanduser().resolve()
     if not base.is_dir():
@@ -226,7 +225,7 @@ def plan(project: str, root: str | Path, con=None, only: Optional[list[str]] = N
         skipped: list[dict] = []
         for path in scan_directory(base):
             rel = path.relative_to(base).as_posix()
-            if only and not any(fnmatch.fnmatchcase(rel, pattern) for pattern in only):
+            if only and not any(glob_match(rel, pattern) for pattern in only):
                 continue
             # a PRD this very file created on an earlier run is not "another PRD"
             has_prd = (any(note != MARKER + rel for note in prd_notes)
@@ -319,6 +318,30 @@ def apply(project: str, found: dict, *, update: bool = False, con=None) -> dict:
 
 
 # ------------------------------------------------------------------------- mentions
+def glob_match(rel: str, pattern: str) -> bool:
+    """Shell-style match on a relative path: ``*`` and ``?`` stay inside one directory,
+    ``**`` crosses directories (so ``docs/*.md`` is not ``docs/specs/S1.md``)."""
+    regex = ""
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            regex += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            regex += ".*"
+            i += 2
+        elif pattern[i] == "*":
+            regex += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            regex += "[^/]"
+            i += 1
+        else:
+            regex += re.escape(pattern[i])
+            i += 1
+    return re.fullmatch(regex, rel) is not None
+
+
 def _mentions(text: str, rel: str) -> bool:
     """Does ``text`` name the file: its relative path, or its file name as a whole token?"""
     if not text:
