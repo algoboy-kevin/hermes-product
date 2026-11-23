@@ -182,8 +182,9 @@ def test_no_verb_prints_help_and_returns_zero(capsys) -> None:
 
 
 def test_extra_args_are_accepted_and_ignored(capsys) -> None:
-    args = _build_parser().parse_args(["link", "R3", "F1", "extra", "words"])
+    # A verb that is still a stub keeps its REMAINDER tail.
+    args = _build_parser().parse_args(["trace", "R3", "extra", "words"])
     rc = product_command(args)
     captured = capsys.readouterr()
     assert rc == 2
-    assert "NOT IMPLEMENTED: link (card HP-3)" in captured.err
+    assert "NOT IMPLEMENTED: trace (card HP-6)" in captured.err

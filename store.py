@@ -23,18 +23,21 @@ can never cross projects.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 try:  # package submodule (Hermes plugin loader)
-    from . import model
+    from . import graph, model
 except ImportError:  # top-level module (test suite)
+    import graph  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
 
 DB_FILENAME = "product.db"
@@ -655,13 +658,13 @@ def create_entity(project: str, kind: str, fields: dict,
     transaction, so a failure after the allocation leaves no gap and no row.
     """
     kind = model.kind_for(kind)
-    if kind == "doc":
-        raise StoreError("NOT IMPLEMENTED: add DOC (card HP-4)")
     own = con is None
     con = con or connect()
     try:
         if not project_exists(project, con):
             raise StoreError(f"project {project!r} does not exist")
+        if kind == "doc":
+            return _create_doc(con, project, dict(fields))
         values = dict(fields)
         if kind == "criterion":
             values["requirement_id"] = _resolve_link(
@@ -680,6 +683,177 @@ def create_entity(project: str, kind: str, fields: dict,
         if own:
             con.close()
     return {"kind": kind, "id": new_id, "ref": model.format_ref(kind, new_id)}
+
+
+# --------------------------------------------------------------- documents (HP-4)
+#: directory (under the project's store directory) holding the DOC body files
+DOC_BODY_DIR = "docs"
+
+#: the ref order of a DOC's links: R, then A, then F, then S, each by id
+DOC_LINK_ORDER = ("requirement", "criterion", "feature", "spec")
+
+
+def docs_dir(project: str) -> Path:
+    """``<db dir>/<project>/docs``: where this project's DOC bodies live."""
+    return db_path().parent / str(project) / DOC_BODY_DIR
+
+
+def doc_body_relative(doc_id: int) -> str:
+    """The ``body_file`` value stored in the row, relative to the project dir."""
+    return f"{DOC_BODY_DIR}/DOC{doc_id}.md"
+
+
+def doc_body_path(project: str, row: dict) -> Path:
+    """Absolute path of a DOC's stored body file (the row keeps it relative)."""
+    return db_path().parent / str(project) / str(row["body_file"])
+
+
+def _write_doc_body(project: str, doc_id: int, text: str) -> Path:
+    """Write the body file ATOMICALLY: a temp file in the same dir, then os.replace."""
+    directory = docs_dir(project)
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / f"DOC{doc_id}.md"
+    handle, temp_name = tempfile.mkstemp(dir=directory, prefix=f".DOC{doc_id}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, final)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+    return final
+
+
+def _after_body_write(doc_id: int) -> None:
+    """Seam between the body file landing and the COMMIT (tests force a failure)."""
+    return None
+
+
+def read_body_source(path_like: str) -> str:
+    """Read a ``--body-file`` source, naming it when it cannot be read."""
+    path = Path(str(path_like)).expanduser()
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise model.ValidationError(f"cannot read {path}: {exc}") from exc
+
+
+def _body_hash(body_ref: Optional[str]) -> Optional[str]:
+    """sha256 of a local ``body_ref`` file; None for a URL or a missing path."""
+    if not body_ref:
+        return None
+    if str(body_ref).startswith(("http://", "https://")):
+        return None
+    path = Path(str(body_ref)).expanduser()
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _extract_body_options(fields: dict) -> tuple[Optional[str], Optional[str]]:
+    """Pop the CLI-only body options; returns (copied text or None, body_ref or None)."""
+    body_file = fields.pop("body_file", None)
+    body = fields.pop("body", None)
+    body_ref = fields.pop("body_ref", None)
+    given = [name for name, value in (("--body-file", body_file), ("--body", body),
+                                      ("--body-ref", body_ref)) if value not in (None, "")]
+    if len(given) > 1:
+        raise model.ValidationError(
+            "pass only one of --body-file, --body, --body-ref (got " + ", ".join(given) + ")"
+        )
+    text: Optional[str] = None
+    if body_file:
+        text = read_body_source(str(body_file))
+    elif body is not None:
+        text = str(body)
+    return text, (str(body_ref) if body_ref else None)
+
+
+def _check_single_prd(con: sqlite3.Connection, project: str,
+                      *, exclude_id: Optional[int] = None) -> None:
+    """Exactly one `prd` document per project (S1 section 7)."""
+    row = con.execute(
+        "SELECT id FROM doc WHERE project = ? AND kind = 'prd'", (project,)
+    ).fetchone()
+    if row is not None and row["id"] != exclude_id:
+        raise model.ValidationError(
+            f"only one prd document per project (DOC{row['id']} is already prd)"
+        )
+
+
+def _create_doc(con: sqlite3.Connection, project: str, fields: dict) -> dict:
+    """Add a DOC#: validate, then id + row + body file in ONE transaction.
+
+    The body file is written (temp file then os.replace) BEFORE COMMIT: a failure
+    anywhere after it removes the file and rolls the row back, so a refused or
+    broken create leaves neither a row nor a file.
+    """
+    values = dict(fields)
+    text, body_ref = _extract_body_options(values)
+    if body_ref is not None:
+        values["body_ref"] = body_ref
+    validated = model.validate_new("doc", values)
+    if validated.get("kind") == "prd":
+        _check_single_prd(con, project)
+    validated["updated_at"] = _now()
+    validated["body_hash"] = _body_hash(body_ref)
+    written: Optional[Path] = None
+    try:
+        with con:                              # id + row + body file: one transaction
+            new_id = next_id(con, project, "DOC", commit=False)
+            if text is not None:
+                validated["body_file"] = doc_body_relative(new_id)
+            _insert_row(con, project, "doc", new_id, validated)
+            if text is not None:
+                written = _write_doc_body(project, new_id, text)
+            _after_body_write(new_id)
+    except BaseException:
+        if written is not None:
+            written.unlink(missing_ok=True)
+        raise
+    return {"kind": "doc", "id": new_id, "ref": model.format_ref("doc", new_id),
+            "body_chars": len(text) if text is not None else 0}
+
+
+def docs_of(con: sqlite3.Connection, project: str, kind: str,
+            entity_id: int) -> list[dict]:
+    """The DOC rows linked to one entry, in doc id order (summary only, never a body)."""
+    rows = con.execute(
+        "SELECT d.id, d.kind, d.title, d.summary, d.status FROM doc_link l"
+        " JOIN doc d ON d.project = l.project AND d.id = l.doc_id"
+        " WHERE l.project = ? AND l.entity_type = ? AND l.entity_id = ?"
+        " ORDER BY d.id",
+        (project, kind, entity_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def doc_link_refs(con: sqlite3.Connection, project: str, doc_id: int) -> list[tuple]:
+    """A DOC's linked entries as ``(kind, id)``, in R, A, F, S then id order."""
+    rows = [
+        (row["entity_type"], row["entity_id"])
+        for row in con.execute(
+            "SELECT entity_type, entity_id FROM doc_link WHERE project = ? AND doc_id = ?",
+            (project, doc_id),
+        )
+    ]
+    return sorted(rows, key=lambda pair: (DOC_LINK_ORDER.index(pair[0]), pair[1]))
+
+
+def doc_link_items(con: sqlite3.Connection, project: str, doc_id: int) -> list[dict]:
+    """The linked entries of a DOC, shaped like ``list_entities`` items (for `show`)."""
+    items: list[dict] = []
+    for kind, entity_id in doc_link_refs(con, project, doc_id):
+        row = _select_row(con, project, kind, entity_id)
+        if row is None:
+            continue
+        row["kind"] = kind
+        row["ref"] = ref_for(kind, entity_id)
+        row["links"] = links_of(con, project, kind, entity_id)
+        items.append(row)
+    return items
 
 
 # ---------------------------------------------------------------- reading entities
@@ -799,6 +973,8 @@ def get_entity(project: str, ref: str, *,
             "row": row,
             "links": links_of(con, project, kind, entity_id),
             "children": _children_of(con, project, kind, entity_id),
+            "docs": docs_of(con, project, kind, entity_id),
+            "doc_links": doc_link_items(con, project, entity_id) if kind == "doc" else [],
             "history": history_of(con, project, kind, entity_id),
         }
     finally:
@@ -815,7 +991,7 @@ def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[
     try:
         if not project_exists(project, con):
             raise StoreError(f"project {project!r} does not exist")
-        kinds = [model.kind_for(kind)] if kind else list(LIST_ORDER)
+        kinds = [model.kind_for(kind)] if kind else [*LIST_ORDER, "doc"]
         found: list[dict] = []
         for one in kinds:
             sql = f"SELECT * FROM {ENTITY_TABLE[one]} WHERE project = ?"
@@ -826,6 +1002,10 @@ def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[
             sql += " ORDER BY id"
             for row in con.execute(sql, tuple(params)):
                 item = dict(row)
+                if one == "doc":
+                    # the row's own `kind` (prd/design/...) is kept under another name
+                    item["doc_kind"] = item.get("kind")
+                    item["doc_links"] = doc_link_refs(con, project, item["id"])
                 item["kind"] = one
                 item["ref"] = model.format_ref(one, item["id"])
                 item["links"] = links_of(con, project, one, item["id"])
@@ -903,6 +1083,15 @@ def load_facts(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
             "requirements": requirements["total"],
             "requirements_not_done": requirements["still_open"],
             "open_only_here": only_here["n"],
+            "mandatory_planned": _id_column(
+                con,
+                "SELECT d.needs_id FROM feature_dependency d"
+                " JOIN feature f ON f.project = d.project AND f.id = d.needs_id"
+                " WHERE d.project = ? AND d.feature_id = ?"
+                "   AND d.optional = 0 AND f.status = 'planned'"
+                " ORDER BY d.needs_id",
+                (project, entity_id),
+            ),
         }
     if kind == "spec":
         criteria = con.execute(
@@ -929,16 +1118,24 @@ def load_facts(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
             "criteria_open": criteria["still_open"],
             "superseded_by_ok": _superseded_ok(con, project, "spec", entity_id, fields),
         }
+    if kind == "doc":
+        return {"superseded_by_ok": _superseded_ok(con, project, "doc", entity_id, fields)}
     return {}
 
 
 def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str] = None,
+                  override_reason: Optional[str] = None,
+                  body_source: Optional[str] = None,
                   con: Optional[sqlite3.Connection] = None) -> dict:
     """Change fields and/or the status of one entry, validated in one transaction.
 
     Every mutation stamps ``updated_at``; a status change and a requirement
     statement change each append a history row (S1 section 9). A statement change
-    on an approved-or-later requirement requires ``reason``.
+    on an approved-or-later requirement requires ``reason``. ``override_reason``
+    only overrides the feature planned -> in_progress dependency check: when that
+    check is the one in play it becomes the status history row's reason, and it is
+    ignored everywhere else. ``body_source`` (a path) replaces a DOC body, logs
+    ``body changed`` and is refused for every other kind.
     """
     own = con is None
     con = con or connect()
@@ -966,15 +1163,31 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
             _resolve_link(con, project, kind, values["superseded_by"], "superseded_by")
         if kind == "feature" and "slug" in values:
             _check_feature_slug(con, project, values["slug"], exclude_id=entity_id)
+        if kind == "doc":
+            if values.get("kind") == "prd":
+                _check_single_prd(con, project, exclude_id=entity_id)
+            if "body_ref" in values:
+                values["body_hash"] = _body_hash(values["body_ref"])
+        body_text: Optional[str] = None
+        if body_source is not None:
+            if kind != "doc":
+                raise model.ValidationError("--body-file only replaces a DOC# body")
+            body_text = read_body_source(body_source)
+            values["body_file"] = doc_body_relative(entity_id)
 
         merged = {**row, **values}
         model.check_blocked(merged)
 
         status_change: Optional[tuple[str, str]] = None
+        clean_override = (str(override_reason).strip() or None) if override_reason is not None else None
+        blocked_dependencies: list = []
         if "status" in values:
             facts = load_facts(con, project, kind, entity_id, merged)
+            if clean_override:
+                facts["override_reason"] = clean_override
             model.check_transition(kind, row, values["status"], merged, facts)
             status_change = (row["status"], values["status"])
+            blocked_dependencies = list(facts.get("mandatory_planned") or [])
 
         statement_changed = (kind == "requirement" and "statement" in values
                              and values["statement"] != row["statement"])
@@ -990,9 +1203,12 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
         values["updated_at"] = now
         events: list[tuple[str, Optional[str]]] = []
         if status_change is not None:
-            events.append((f"status {status_change[0]} -> {status_change[1]}", clean_reason))
+            status_reason = clean_override if (clean_override and blocked_dependencies) else clean_reason
+            events.append((f"status {status_change[0]} -> {status_change[1]}", status_reason))
         if statement_changed:
             events.append(("statement changed", clean_reason))
+        if body_text is not None:
+            events.append(("body changed", clean_reason))
 
         with con:
             assignments = ", ".join(f"{name} = ?" for name in values)
@@ -1006,14 +1222,332 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
                     " VALUES (?,?,?,?,?,?)",
                     (project, kind, entity_id, change, why, now),
                 )
+            if body_text is not None:
+                _write_doc_body(project, entity_id, body_text)
+        changed = list(changes) + (["body"] if body_text is not None else [])
         return {
             "kind": kind,
             "id": entity_id,
             "ref": model.format_ref(kind, entity_id),
-            "changed": list(changes),
+            "changed": changed,
             "status_change": status_change,
             "row": _select_row(con, project, kind, entity_id),
         }
+    finally:
+        if own:
+            con.close()
+
+
+# --------------------------------------------------------------------- links (HP-3)
+#: same-kind dependency tables: kind -> (table, subject column, needs column)
+DEPENDENCY_LINKS = {
+    "feature": ("feature_dependency", "feature_id", "needs_id"),
+    "requirement": ("requirement_dependency", "requirement_id", "needs_id"),
+    "spec": ("spec_dependency", "spec_id", "needs_id"),
+}
+
+#: cross-kind relation tables: unordered kind pair -> (table, {kind: column})
+RELATION_LINKS = {
+    frozenset(("feature", "requirement")): (
+        "feature_requirement", {"feature": "feature_id", "requirement": "requirement_id"}),
+    frozenset(("spec", "requirement")): (
+        "spec_requirement", {"spec": "spec_id", "requirement": "requirement_id"}),
+    frozenset(("feature", "spec")): (
+        "feature_spec", {"feature": "feature_id", "spec": "spec_id"}),
+}
+
+#: an entry in this state cannot take part in a new link (S2 section 2)
+RETIRED_STATUS = {"requirement": "dropped", "feature": "cut", "spec": "superseded",
+                  "doc": "superseded"}
+
+#: the combinations `link`/`unlink` accept, named in every shape error
+LINK_SHAPES = (
+    "valid: link F1 R1 / S1 R1 / F1 S1 (cross-kind), or "
+    "link F1 --needs F2 / R1 --needs R2 / S1 --needs S2 (same kind; "
+    "--optional for feature dependencies)"
+)
+
+
+def _row_status(con: sqlite3.Connection, project: str, kind: str,
+                entity_id: int) -> Optional[str]:
+    row = con.execute(
+        f"SELECT status FROM {ENTITY_TABLE[kind]} WHERE project = ? AND id = ?",
+        (project, entity_id),
+    ).fetchone()
+    return row["status"] if row is not None else None
+
+
+def _refuse_retired(con: sqlite3.Connection, project: str, kind: str,
+                    entity_id: int, verb: str) -> None:
+    """Refuse a link to a retired entry, naming the entry and its state."""
+    retired = RETIRED_STATUS.get(kind)
+    status = _row_status(con, project, kind, entity_id)
+    if retired is not None and status == retired:
+        raise model.ValidationError(
+            f"cannot {verb} {ref_for(kind, entity_id)}: it is {status}"
+        )
+
+
+def _stamp_and_log(con: sqlite3.Connection, project: str, now: str,
+                   events: list) -> None:
+    """Set ``updated_at`` and append one history row per (kind, id, change)."""
+    for kind, entity_id, change in events:
+        con.execute(
+            f"UPDATE {ENTITY_TABLE[kind]} SET updated_at = ? WHERE project = ? AND id = ?",
+            (now, project, entity_id),
+        )
+        con.execute(
+            "INSERT INTO history(project, entity_type, entity_id, change, reason, at)"
+            " VALUES (?,?,?,?,?,?)",
+            (project, kind, entity_id, change, None, now),
+        )
+
+
+def link_entries(project: str, first: str, second: Optional[str] = None, *,
+                 needs: Optional[str] = None, optional: bool = False,
+                 remove: bool = False, con: Optional[sqlite3.Connection] = None) -> dict:
+    """Create (or with ``remove`` drop) one relation or dependency edge.
+
+    Shapes are frozen (S4): two references of different kinds are a relation;
+    ``<REF> --needs <REF>`` of the same kind is a dependency (feature edges carry
+    ``optional``). A DOC# links to any entry through ``doc_link`` and never to
+    another document. Every rule is checked before the first write, and the writes
+    run in ONE transaction, so a refused call changes nothing and a crash cannot
+    leave half a link.
+    """
+    verb = "unlink" if remove else "link"
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        kind_a, id_a = resolve_entity(project, first, con=con)
+        ref_a = ref_for(kind_a, id_a)
+        pair_ids: tuple = ()
+        optional_value = 0
+        subject_col = other_col = ""
+        if kind_a == "criterion":
+            raise model.ValidationError(
+                f"cannot {verb} {ref_a}: a criterion belongs to its requirement"
+            )
+
+        doc_pair = False
+        dependency = False
+        if needs is not None:
+            if second is not None:
+                raise model.ValidationError(
+                    f"cannot {verb} {ref_a} {second} --needs {needs}: pass either two"
+                    f" references or one reference and --needs ({LINK_SHAPES})"
+                )
+            kind_b, id_b = resolve_entity(project, needs, con=con)
+            ref_b = ref_for(kind_b, id_b)
+            if kind_b == "criterion":
+                raise model.ValidationError(
+                    f"cannot {verb} {ref_b}: a criterion belongs to its requirement"
+                )
+            if "doc" in (kind_a, kind_b):
+                raise model.ValidationError(
+                    f"--needs is only for R/F/S dependencies ({LINK_SHAPES})"
+                )
+            if kind_a != kind_b:
+                raise model.ValidationError(
+                    f"cannot {verb} {ref_a} --needs {ref_b}: --needs joins two entries"
+                    f" of the same kind ({LINK_SHAPES})"
+                )
+            if optional and kind_a != "feature":
+                raise model.ValidationError(
+                    "--optional is only valid for a feature dependency"
+                    " (F1 --needs F2 --optional)"
+                )
+            table, subject_col, other_col = DEPENDENCY_LINKS[kind_a]
+            optional_value = 1 if (optional and kind_a == "feature") else 0
+            pair_ids = (id_a, id_b)
+            dependency = True
+        else:
+            if second is None:
+                raise model.ValidationError(
+                    f"{verb} needs two references, or a reference and --needs <REF>"
+                    f" ({LINK_SHAPES})"
+                )
+            kind_b, id_b = resolve_entity(project, second, con=con)
+            ref_b = ref_for(kind_b, id_b)
+            if kind_b == "criterion" and kind_a != "doc":
+                raise model.ValidationError(
+                    f"cannot {verb} {ref_b}: a criterion belongs to its requirement"
+                )
+            if kind_a == kind_b:
+                if kind_a == "doc":
+                    raise model.ValidationError(
+                        f"cannot {verb} {ref_a} {ref_b}: a document links to an entry,"
+                        " not to another document"
+                    )
+                raise model.ValidationError(
+                    f"cannot {verb} {ref_a} {ref_b}: same-kind pairs are a dependency,"
+                    f" not a relation ({LINK_SHAPES})"
+                )
+            if optional:
+                raise model.ValidationError(
+                    "--optional is only valid for a feature dependency"
+                    " (F1 --needs F2 --optional)"
+                )
+            if "doc" in (kind_a, kind_b):
+                doc_pair = True
+                table = "doc_link"
+                pair_ids = (id_a, id_b)
+            else:
+                table, columns = RELATION_LINKS[frozenset((kind_a, kind_b))]
+                ordered = sorted((kind_a, kind_b), key=lambda kind: columns[kind])
+                subject_col, other_col = columns[ordered[0]], columns[ordered[1]]
+                by_kind = {kind_a: id_a, kind_b: id_b}
+                pair_ids = (by_kind[ordered[0]], by_kind[ordered[1]])
+
+        if not remove and kind_a == kind_b and id_a == id_b:
+            raise model.ValidationError(f"cannot link {ref_a} to itself")
+        _refuse_retired(con, project, kind_a, id_a, verb)
+        _refuse_retired(con, project, kind_b, id_b, verb)
+
+        if doc_pair:
+            doc_kind, doc_id = (kind_a, id_a) if kind_a == "doc" else (kind_b, id_b)
+            entity_kind, entity_id = (kind_b, id_b) if kind_a == "doc" else (kind_a, id_a)
+            exists = con.execute(
+                "SELECT 1 FROM doc_link WHERE project = ? AND doc_id = ?"
+                " AND entity_type = ? AND entity_id = ?",
+                (project, doc_id, entity_kind, entity_id),
+            ).fetchone() is not None
+        else:
+            exists = con.execute(
+                f"SELECT 1 FROM {table} WHERE project = ? AND {subject_col} = ?"
+                f" AND {other_col} = ?",
+                (project, pair_ids[0], pair_ids[1]),
+            ).fetchone() is not None
+
+        if remove and not exists:
+            raise model.ValidationError(f"no such link: {ref_a} {ref_b}")
+        if not remove and exists:
+            raise model.ValidationError(f"already linked: {ref_a} {ref_b}")
+
+        if not remove and dependency:
+            edges = [tuple(row) for row in con.execute(
+                f"SELECT {subject_col}, {other_col} FROM {table} WHERE project = ?",
+                (project,),
+            )]
+            cycle = graph.find_cycle(edges, (pair_ids[0], pair_ids[1]))
+            if cycle is not None:
+                named = " -> ".join(ref_for(kind_a, value) for value in cycle)
+                raise model.ValidationError(f"would create a dependency cycle: {named}")
+
+        if dependency:
+            other_change = (f"needs {ref_b}", f"needed by {ref_a}") if not remove else (
+                f"no longer needs {ref_b}", f"no longer needed by {ref_a}")
+            message = (f"{ref_a} needs {ref_b}" if not remove else
+                       f"{ref_a} no longer needs {ref_b}")
+            if not remove and optional_value:
+                message += " (optional)"
+        else:
+            verb_word = "linked" if not remove else "unlinked"
+            other_change = (f"{verb_word} {ref_b}", f"{verb_word} {ref_a}")
+            message = f"{ref_a} {verb_word} {ref_b}"
+
+        now = _now()
+        with con:
+            if doc_pair:
+                if remove:
+                    con.execute(
+                        "DELETE FROM doc_link WHERE project = ? AND doc_id = ?"
+                        " AND entity_type = ? AND entity_id = ?",
+                        (project, doc_id, entity_kind, entity_id),
+                    )
+                else:
+                    con.execute(
+                        "INSERT INTO doc_link(project, doc_id, entity_type, entity_id)"
+                        " VALUES (?,?,?,?)",
+                        (project, doc_id, entity_kind, entity_id),
+                    )
+                events = [(doc_kind, doc_id, other_change[0]),
+                          (entity_kind, entity_id, other_change[1])]
+            elif dependency:
+                needs_optional = kind_a == "feature"
+                if remove:
+                    con.execute(
+                        f"DELETE FROM {table} WHERE project = ? AND {subject_col} = ?"
+                        f" AND {other_col} = ?",
+                        (project, pair_ids[0], pair_ids[1]),
+                    )
+                elif needs_optional:
+                    con.execute(
+                        f"INSERT INTO {table}(project, {subject_col}, {other_col}, optional)"
+                        " VALUES (?,?,?,?)",
+                        (project, pair_ids[0], pair_ids[1], optional_value),
+                    )
+                else:
+                    con.execute(
+                        f"INSERT INTO {table}(project, {subject_col}, {other_col})"
+                        " VALUES (?,?,?)",
+                        (project, pair_ids[0], pair_ids[1]),
+                    )
+                events = [(kind_a, id_a, other_change[0]), (kind_b, id_b, other_change[1])]
+            else:
+                if remove:
+                    con.execute(
+                        f"DELETE FROM {table} WHERE project = ? AND {subject_col} = ?"
+                        f" AND {other_col} = ?",
+                        (project, pair_ids[0], pair_ids[1]),
+                    )
+                else:
+                    con.execute(
+                        f"INSERT INTO {table}(project, {subject_col}, {other_col})"
+                        " VALUES (?,?,?)",
+                        (project, pair_ids[0], pair_ids[1]),
+                    )
+                events = [(kind_a, id_a, other_change[0]), (kind_b, id_b, other_change[1])]
+            _stamp_and_log(con, project, now, events)
+
+        return {
+            "verb": verb,
+            "table": table,
+            "subject": ref_a,
+            "other": ref_b,
+            "optional": optional_value if dependency else 0,
+            "message": message,
+        }
+    finally:
+        if own:
+            con.close()
+
+
+# ----------------------------------------------------------- feature graph (HP-3)
+def feature_graph(project: str, con: Optional[sqlite3.Connection] = None) -> dict:
+    """The non-cut features and their dependency edges, for ``graph``.
+
+    A cut feature is out of the graph, and so is an edge that touches one: the
+    written reason for cutting a feature is that nothing depends on it any more.
+    """
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        nodes = {
+            row["id"]: row["title"] or ""
+            for row in con.execute(
+                "SELECT id, title FROM feature WHERE project = ? AND status != 'cut'"
+                " ORDER BY id",
+                (project,),
+            )
+        }
+        edges: list = []
+        mandatory: list = []
+        for row in con.execute(
+            "SELECT feature_id, needs_id, optional FROM feature_dependency"
+            " WHERE project = ? ORDER BY needs_id, feature_id",
+            (project,),
+        ):
+            if row["feature_id"] not in nodes or row["needs_id"] not in nodes:
+                continue
+            edges.append((row["feature_id"], row["needs_id"], int(row["optional"])))
+            if not row["optional"]:
+                mandatory.append((row["feature_id"], row["needs_id"]))
+        return {"nodes": nodes, "edges": edges, "mandatory": mandatory}
     finally:
         if own:
             con.close()

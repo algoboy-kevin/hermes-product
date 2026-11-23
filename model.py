@@ -25,6 +25,12 @@ KINDS = ("requirement", "criterion", "feature", "spec", "doc")
 PREFIX = {"requirement": "R", "criterion": "A", "feature": "F", "spec": "S", "doc": "DOC"}
 KIND_BY_PREFIX = {prefix: kind for kind, prefix in PREFIX.items()}
 
+#: the kinds a DOC# may declare (S1 section 7); exactly one `prd` per project
+DOC_KINDS = ("prd", "spec", "context", "research", "design", "api", "runbook", "other")
+
+#: a document summary is what an agent sees by default: one or two sentences
+DOC_SUMMARY_MAX = 400
+
 STATUSES: dict[str, tuple[str, ...]] = {
     "requirement": ("draft", "approved", "in_progress", "done", "dropped"),
     "criterion": ("not_run", "passed", "failed", "waived"),
@@ -46,11 +52,12 @@ CHAIN: dict[str, tuple[str, ...]] = {
     "requirement": ("draft", "approved", "in_progress", "done"),
     "feature": ("planned", "in_progress", "shipped"),
     "spec": ("draft", "approved", "implemented", "verified"),
+    "doc": ("current",),
 }
 
 #: states reachable from anywhere and never left
 TERMINAL = {"requirement": ("dropped",), "feature": ("cut",), "spec": ("superseded",),
-            "criterion": ()}
+            "doc": ("superseded",), "criterion": ()}
 
 
 def _transitions(kind: str) -> dict[str, tuple[str, ...]]:
@@ -188,8 +195,12 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
     },
     "doc": {
         "title": {"type": "title"},
-        "summary": {"type": "required_text"},
+        "kind": {"type": _ENUM, "values": DOC_KINDS},
+        "summary": {"type": "doc_summary"},
         "status": {"type": _ENUM, "values": STATUSES["doc"]},
+        "superseded_by": {"type": "ref", "target": "doc"},
+        "notes": {"type": "text"},
+        "body_ref": {"type": "text"},
     },
 }
 
@@ -200,7 +211,7 @@ ADD_FIELDS: dict[str, tuple[str, ...]] = {
     "criterion": ("requirement_id", "text", "notes"),
     "feature": ("title", "layer", "slug", "phase", "description", "infra", "paths", "notes"),
     "spec": ("title", "summary", "paths", "notes"),
-    "doc": ("title", "summary"),
+    "doc": ("title", "kind", "summary", "notes", "body_ref"),
 }
 
 #: what `set <REF> key=value` accepts
@@ -213,7 +224,7 @@ SET_FIELDS: dict[str, tuple[str, ...]] = {
                 "description", "infra", "paths", "blocked", "blocked_reason", "notes"),
     "spec": ("title", "summary", "status", "status_reason", "superseded_by", "paths",
              "blocked", "blocked_reason", "notes"),
-    "doc": ("title", "summary", "status"),
+    "doc": ("title", "kind", "summary", "status", "superseded_by", "notes", "body_ref"),
 }
 
 REQUIRED_AT_ADD: dict[str, tuple[str, ...]] = {
@@ -221,7 +232,7 @@ REQUIRED_AT_ADD: dict[str, tuple[str, ...]] = {
     "criterion": ("requirement_id", "text"),
     "feature": ("title", "layer"),
     "spec": ("title", "summary"),
-    "doc": ("title", "summary"),
+    "doc": ("title", "kind", "summary"),
 }
 
 DEFAULTS: dict[str, dict[str, Any]] = {
@@ -246,12 +257,17 @@ def validate_field(kind: str, name: str, value: Any) -> Any:
         raise ValidationError(f"{name} is not a field of {PREFIX[kind]}#")
     kind_of_rule = rule["type"]
 
-    if kind_of_rule in ("text", "required_text", "title"):
+    if kind_of_rule in ("text", "required_text", "title", "doc_summary"):
         if not isinstance(value, str):
             raise ValidationError(f"{name} must be text, got {value!r}")
         cleaned = value.strip()
-        if kind_of_rule == "required_text" and not cleaned:
+        if kind_of_rule in ("required_text", "doc_summary") and not cleaned:
             raise ValidationError(f"{name} must not be empty")
+        if kind_of_rule == "doc_summary" and len(cleaned) > DOC_SUMMARY_MAX:
+            raise ValidationError(
+                f"summary must be 1-2 sentences, got {len(cleaned)} characters"
+                f" (max {DOC_SUMMARY_MAX})"
+            )
         if kind_of_rule == "title":
             if not 3 <= len(cleaned) <= 80:
                 raise ValidationError(
@@ -412,6 +428,8 @@ def check_transition(kind: str, current_row: dict, target: str, fields: dict,
         _feature_exit(move_text, target, fields, facts)
     elif kind == "spec":
         _spec_exit(move_text, target, fields, facts)
+    elif kind == "doc":
+        _doc_exit(move_text, target, fields, facts)
     elif kind == "criterion" and target in ("passed", "waived"):
         if not _has_text(fields.get("evidence")):
             raise ValidationError(f"cannot move {move_text}: {target} needs evidence")
@@ -457,7 +475,12 @@ def _requirement_exit(move_text: str, target: str, fields: dict, facts: dict) ->
 
 
 def _feature_exit(move_text: str, target: str, fields: dict, facts: dict) -> None:
-    if target == "shipped":
+    if target == "in_progress":
+        blocked = [int(value) for value in facts.get("mandatory_planned", [])]
+        if blocked and not facts.get("override_reason"):
+            named = ", ".join(f"F{value} (planned)" for value in blocked)
+            raise ValidationError(f"cannot move {move_text}: depends on {named}")
+    elif target == "shipped":
         total = int(facts.get("requirements", 0))
         still_open = int(facts.get("requirements_not_done", 0))
         if total == 0 and not fields.get("infra"):
@@ -509,4 +532,13 @@ def _spec_exit(move_text: str, target: str, fields: dict, facts: dict) -> None:
             raise ValidationError(
                 f"cannot move {move_text}: needs superseded_by naming an existing,"
                 " different spec in the same project"
+            )
+
+
+def _doc_exit(move_text: str, target: str, fields: dict, facts: dict) -> None:
+    if target == "superseded":
+        if fields.get("superseded_by") is None or not facts.get("superseded_by_ok"):
+            raise ValidationError(
+                f"cannot move {move_text}: needs superseded_by naming an existing,"
+                " different document in the same project"
             )

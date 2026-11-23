@@ -16,11 +16,14 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import model, store
+    from . import docs_text, graph, model, store
 except ImportError:  # top-level module (test suite)
+    import docs_text  # type: ignore[no-redef]
+    import graph  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
 
@@ -51,8 +54,10 @@ VERB_CARDS: dict[str, str] = {
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
-# Verbs this build actually implements (HP-1: the project verbs; HP-2: entities).
-IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list"}
+# Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
+# HP-3: link/unlink and the feature graph; HP-4: DOC bodies).
+IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
+               "link", "unlink", "graph", "doc read"}
 
 SEP = "  "
 
@@ -113,19 +118,46 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                        help="Plumbing with no requirement of its own (F#)")
     p_add.add_argument("--paths", default=None, help="Code paths, comma separated (F#, S#)")
     p_add.add_argument("--summary", default=None, help="What the spec decides (S#)")
+    p_add.add_argument("--kind", dest="doc_kind", default=None, metavar="KIND",
+                       help="prd|spec|context|research|design|api|runbook|other (DOC#)")
+    p_add.add_argument("--body", default=None,
+                       help="The document text, stored with the project (DOC#)")
+    p_add.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
+                       help="Copy this file in as the document body (DOC#)")
+    p_add.add_argument("--body-ref", dest="body_ref", default=None, metavar="REF",
+                       help="An external path or URL holding the body (DOC#)")
 
     p_set = subs.add_parser("set", help="Change a field or status (validated)")
     p_set.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
-    p_set.add_argument("pairs", nargs="+", metavar="key=value",
+    p_set.add_argument("pairs", nargs="*", metavar="key=value",
                        help="field=value pairs (quote values that contain spaces)")
     p_set.add_argument("--reason", default=None,
                        help="Why the change happened; required for a statement change"
                             " once the requirement is approved")
+    p_set.add_argument("--override-reason", dest="override_reason", default=None,
+                       help="Record the reason a feature starts in_progress while a"
+                            " mandatory dependency is still planned")
+    p_set.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
+                       help="Replace a DOC body with this file (DOC#)")
     _add_project_option(p_set)
     p_link = subs.add_parser("link", help="Create a relation, or add a dependency edge")
-    _add_tail(p_link)
+    p_link.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
+    p_link.add_argument("ref2", nargs="?", default=None, metavar="REF",
+                        help="The other entry, for a cross-kind relation")
+    p_link.add_argument("--needs", default=None, metavar="REF",
+                        help="The entry this one depends on (same kind)")
+    p_link.add_argument("--optional", action="store_true", default=False,
+                        help="A feature dependency that does not block (F# only)")
+    _add_project_option(p_link)
     p_unlink = subs.add_parser("unlink", help="Remove a relation, or remove a dependency edge")
-    _add_tail(p_unlink)
+    p_unlink.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
+    p_unlink.add_argument("ref2", nargs="?", default=None, metavar="REF",
+                          help="The other entry, for a cross-kind relation")
+    p_unlink.add_argument("--needs", default=None, metavar="REF",
+                          help="The dependency to remove (same kind)")
+    p_unlink.add_argument("--optional", action="store_true", default=False,
+                          help=argparse.SUPPRESS)
+    _add_project_option(p_unlink)
 
     p_show = subs.add_parser("show", help="Full detail for one entry")
     p_show.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
@@ -155,7 +187,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         "graph",
         help="Export the feature graph as Mermaid; --critical prints the critical path",
     )
-    _add_tail(p_graph)
+    p_graph.add_argument("--critical", action="store_true", default=False,
+                         help="Print the longest chain of mandatory dependencies")
+    _add_project_option(p_graph)
 
     p_doc = subs.add_parser("doc", help="Work with a DOC body")
     dsubs = p_doc.add_subparsers(dest="doc_action", metavar="{read}")
@@ -163,7 +197,12 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         "read",
         help="Read a DOC body, always bounded, reports truncation",
     )
-    _add_tail(p_dr)
+    p_dr.add_argument("ref", metavar="REF", help="DOC1")
+    p_dr.add_argument("--section", default=None, metavar="HEADING",
+                      help="Only this section (matched on the heading text)")
+    p_dr.add_argument("--max-chars", dest="max_chars", type=int, default=4000, metavar="N",
+                      help="At most N characters (1..100000, default 4000)")
+    _add_project_option(p_dr)
 
     p_scan = subs.add_parser(
         "scan-prd",
@@ -256,11 +295,20 @@ def _line_spec(item: dict) -> str:
     ])
 
 
+def _line_doc(item: dict) -> str:
+    refs = [model.format_ref(kind, value) for kind, value in item.get("doc_links") or []]
+    return SEP.join([
+        item["ref"], _column(item.get("doc_kind")), _column(item.get("status")),
+        _flat(item.get("title") or ""), f"links {_ids(refs)}",
+    ])
+
+
 LINE_BUILDERS = {
     "requirement": _line_requirement,
     "criterion": _line_criterion,
     "feature": _line_feature,
     "spec": _line_spec,
+    "doc": _line_doc,
 }
 
 
@@ -277,7 +325,8 @@ SHOW_ORDER: dict[str, tuple[str, ...]] = {
                 "updated_at"),
     "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
              "blocked", "blocked_reason", "notes", "updated_at"),
-    "doc": ("id", "title", "summary", "status", "notes", "updated_at"),
+    "doc": ("id", "title", "kind", "summary", "status", "superseded_by", "notes",
+            "updated_at"),
 }
 
 _FLAG_FIELDS = {"blocked", "legacy", "infra"}
@@ -289,7 +338,8 @@ def _show_value(kind: str, field: str, value: Any) -> str:
     if field == "requirement_id":
         return model.format_ref("requirement", value)
     if field == "superseded_by":
-        return model.format_ref(kind if kind in ("requirement", "spec") else "requirement", value)
+        return model.format_ref(kind if kind in ("requirement", "spec", "doc") else "requirement",
+                                value)
     if field == "paths":
         try:
             items = json.loads(value)
@@ -361,13 +411,19 @@ _ADD_FLAG_FIELDS = {
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    """`add <KIND> ...` -> `<REF> created`; DOC is card HP-4."""
-    if str(args.kind).upper() == "DOC":
-        print("NOT IMPLEMENTED: add DOC (card HP-4)", file=sys.stderr)
-        return EXIT_NOT_IMPLEMENTED
+    """`add <KIND> ...` -> `<REF> created`; DOC# takes --kind and a body option."""
     project = _project(args)
     kind = model.kind_for(args.kind)
     fields: dict[str, Any] = {}
+    if kind == "doc":
+        for name in ("title", "summary", "notes", "body_file", "body", "body_ref"):
+            value = getattr(args, name, None)
+            if value is not None:
+                fields[name] = value
+        fields["kind"] = args.doc_kind
+        created = store.create_entity(project, "doc", fields)
+        print(f"{created['ref']} created")
+        return EXIT_OK
     for flag, field in _ADD_FLAG_FIELDS.items():
         value = getattr(args, flag, None)
         if value is None:
@@ -386,11 +442,34 @@ def _render_item(item: dict) -> str:
     return LINE_BUILDERS[item["kind"]](item)
 
 
+def _link_tokens(kind: str, links: dict) -> list[str]:
+    """The link columns of one entry, as the tokens `list` uses; empty ones dropped."""
+    tokens: list[str] = []
+    if kind == "requirement":
+        if links.get("features"):
+            tokens.append(f"F:{_ids(links['features'])}")
+        if links.get("specs"):
+            tokens.append(f"S:{_ids(links['specs'])}")
+    elif kind == "feature":
+        if links.get("needs"):
+            tokens.append(f"needs F:{_ids(links['needs'])}")
+        if links.get("requirements"):
+            tokens.append(f"R:{_ids(links['requirements'])}")
+        if links.get("specs"):
+            tokens.append(f"S:{_ids(links['specs'])}")
+    elif kind == "spec":
+        if links.get("requirements"):
+            tokens.append(f"R:{_ids(links['requirements'])}")
+        if links.get("features"):
+            tokens.append(f"F:{_ids(links['features'])}")
+    return tokens
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
-    """`list [R|A|F|S] [--status S] [--limit N]` -> one compact line per item."""
-    if args.kind is not None and args.kind not in ("R", "A", "F", "S"):
+    """`list [R|A|F|S|DOC] [--status S] [--limit N]` -> one compact line per item."""
+    if args.kind is not None and args.kind not in ("R", "A", "F", "S", "DOC"):
         raise model.ValidationError(
-            f"list accepts R, A, F or S, got {args.kind!r}"
+            f"list accepts R, A, F, S or DOC, got {args.kind!r}"
         )
     project = _project(args)
     items = store.list_entities(project, args.kind, status=args.status, limit=args.limit)
@@ -402,6 +481,10 @@ def _cmd_list(args: argparse.Namespace) -> int:
 def _cmd_set(args: argparse.Namespace) -> int:
     """`set <REF> key=value ...` -> `R3 approved -> in_progress`, else `R3 updated: a, b`."""
     project = _project(args)
+    if not args.pairs and args.body_file is None:
+        raise model.ValidationError(
+            "set needs key=value pairs, or --body-file to replace a DOC# body"
+        )
     changes: dict[str, str] = {}
     for pair in args.pairs:
         if "=" not in pair:
@@ -413,7 +496,9 @@ def _cmd_set(args: argparse.Namespace) -> int:
         if not key:
             raise model.ValidationError(f"expected key=value, got {pair!r}: empty key")
         changes[key] = value
-    result = store.update_entity(project, args.ref, changes, reason=args.reason)
+    result = store.update_entity(project, args.ref, changes, reason=args.reason,
+                                 override_reason=args.override_reason,
+                                 body_source=args.body_file)
     ref = result["ref"]
     if result["status_change"] is not None:
         old, new = result["status_change"]
@@ -424,7 +509,11 @@ def _cmd_set(args: argparse.Namespace) -> int:
 
 
 def _cmd_show(args: argparse.Namespace) -> int:
-    """`show <REF>` -> S1 fields, then child A-lines, then `history:`."""
+    """`show <REF>` -> S1 fields, the link line, child A-lines, docs, then `history:`.
+
+    A DOC# is different: fields, then one body line (never the text), then each
+    linked entry as its compact line.
+    """
     project = _project(args)
     entry = store.get_entity(project, args.ref)
     kind, row = entry["kind"], entry["row"]
@@ -432,18 +521,123 @@ def _cmd_show(args: argparse.Namespace) -> int:
         line = _show_line(kind, field, row.get(field))
         if line is not None:
             print(line)
+    if kind == "doc":
+        print(_doc_body_line(project, row))
+        for item in entry["doc_links"]:
+            print(_render_item(item))
+        return EXIT_OK
+    tokens = _link_tokens(kind, entry["links"])
+    if tokens:
+        print(f"links: {SEP.join(tokens)}")
     for child in entry["children"]:
         item = dict(child)
         item["kind"] = "criterion"
         item["ref"] = model.format_ref("criterion", child["id"])
         item["links"] = {}
         print(_line_criterion(item))
+    if entry["docs"]:
+        print("docs:")
+        for doc in entry["docs"]:
+            print(SEP.join([f"DOC{doc['id']}", _column(doc.get("kind")),
+                            _flat(doc.get("summary") or "")]))
     print("history:")
     for event in entry["history"]:
         line = f"{event['at']}{SEP}{event['change']}"
         if event["reason"]:
             line += f"{SEP}[{event['reason']}]"
         print(line)
+    return EXIT_OK
+
+
+def _doc_body_line(project: str, row: dict) -> str:
+    """One line saying where a DOC's body lives — never the body text."""
+    if row.get("body_file"):
+        path = store.doc_body_path(project, row)
+        if path.is_file():
+            chars = len(path.read_text(encoding="utf-8"))
+            return f"body: {chars} chars (doc read DOC{row['id']})"
+        return f"body: missing ({row['body_file']})"
+    if row.get("body_ref"):
+        return f"body_ref: {_flat(row['body_ref'])}"
+    return "body: none"
+
+
+def _doc_text(project: str, row: dict) -> str:
+    """A DOC's text: its stored body file, or a LOCAL body_ref read at call time."""
+    ref = model.format_ref("doc", row["id"])
+    if row.get("body_file"):
+        path = store.doc_body_path(project, row)
+        if not path.is_file():
+            raise model.ValidationError(f"{ref} body file is missing: {path}")
+        return path.read_text(encoding="utf-8")
+    body_ref = str(row.get("body_ref") or "").strip()
+    if not body_ref:
+        raise model.ValidationError(f"{ref} has no body")
+    if body_ref.startswith(("http://", "https://")):
+        raise model.ValidationError("body_ref is a URL; fetch it yourself")
+    path = Path(body_ref).expanduser()
+    if not path.is_absolute():
+        project_row = store.get_project(project) or {}
+        base = Path(project_row["root"]) if project_row.get("root") else Path.cwd()
+        path = base / path
+    if not path.is_file():
+        raise model.ValidationError(f"{ref} body_ref file does not exist: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _cmd_doc_read(args: argparse.Namespace) -> int:
+    """`doc read DOC1 [--section H] [--max-chars N]` -> bounded text + one trailer."""
+    project = _project(args)
+    limit = args.max_chars
+    if not 1 <= limit <= 100000:
+        raise model.ValidationError(f"--max-chars must be 1..100000, got {limit}")
+    entry = store.get_entity(project, args.ref)
+    if entry["kind"] != "doc":
+        raise model.ValidationError(
+            f"{entry['ref']} is not a DOC#; doc read reads a document body"
+        )
+    text = _doc_text(project, entry["row"])
+    if args.section is not None:
+        found = docs_text.section(text, args.section)
+        if found is None:
+            names = [name for _level, name, _start, _end in docs_text.headings(text)][:20]
+            listed = ", ".join(names) if names else "no headings"
+            raise model.ValidationError(
+                f"no section {args.section!r} in {entry['ref']} (headings: {listed})"
+            )
+        text = found
+    piece, total, truncated = docs_text.bounded(text, limit)
+    sys.stdout.write(piece)
+    if truncated:
+        if not piece.endswith("\n"):
+            sys.stdout.write("\n")
+        print(f"[truncated: showed {len(piece)} of {total} chars]")
+    return EXIT_OK
+
+
+def _cmd_link(args: argparse.Namespace, *, remove: bool) -> int:
+    """`link`/`unlink <REF> [<REF>|--needs <REF>] [--optional]` -> one result line."""
+    project = _project(args)
+    result = store.link_entries(project, args.ref, args.ref2, needs=args.needs,
+                                optional=args.optional, remove=remove)
+    print(result["message"])
+    return EXIT_OK
+
+
+def _cmd_graph(args: argparse.Namespace) -> int:
+    """`graph` -> the Mermaid graph; `graph --critical` -> the longest chain."""
+    project = _project(args)
+    data = store.feature_graph(project)
+    if args.critical:
+        # edges are (feature, needs); the path prints in BUILD order (needs first)
+        path = graph.critical_path(data["nodes"], [(needs, feature) for feature, needs in data["mandatory"]])
+        if not path:
+            print("no features")
+        else:
+            chain = " -> ".join(model.format_ref("feature", value) for value in path)
+            print(f"critical path ({len(path)}): {chain}")
+    else:
+        print(graph.mermaid(data["nodes"], data["edges"]))
     return EXIT_OK
 
 
@@ -455,6 +649,10 @@ _IMPLEMENTED_HANDLERS = {
     "set": _cmd_set,
     "list": _cmd_list,
     "show": _cmd_show,
+    "link": lambda args: _cmd_link(args, remove=False),
+    "unlink": lambda args: _cmd_link(args, remove=True),
+    "graph": _cmd_graph,
+    "doc read": _cmd_doc_read,
 }
 
 

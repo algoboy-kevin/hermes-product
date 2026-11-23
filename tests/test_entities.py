@@ -295,13 +295,16 @@ def test_format_ref_round_trips() -> None:
 
 
 # ------------------------------------------------------------------------- DOC
-def test_add_doc_is_not_implemented_here(home: Path, capsys) -> None:
+def test_add_doc_creates_the_document(home: Path, capsys) -> None:
+    # HP-4 replaced the HP-2 stub: `add DOC` is a real create now.
     make_project()
-    rc = run(["add", "DOC", "--title", "Webhook flow"])
+    rc = run(["add", "DOC", "--title", "Webhook flow", "--kind", "design",
+              "--summary", "How webhooks are processed."])
     captured = capsys.readouterr()
-    assert rc == 2
-    assert captured.err == "NOT IMPLEMENTED: add DOC (card HP-4)\n"
-    assert captured.out == ""
+    assert rc == 0
+    assert captured.out == "DOC1 created\n"
+    assert captured.err == ""
+    assert store.get_entity(PROJECT, "DOC1")["row"]["kind"] == "design"
 
 
 # ------------------------------------------------------------- add cannot set status

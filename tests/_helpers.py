@@ -1,8 +1,9 @@
-"""Shared fixtures and row helpers for the HP-2 entity, status and output tests.
+"""Shared fixtures and row helpers for the entity, status, output and link tests.
 
-Link rows and ``external_link`` rows have no verb until HP-3, so the helpers at
-the bottom INSERT them directly with the composite keys of SCHEMA_V1 (HP-2 brief,
-item 8). No test may rely on a link verb; nothing here reads docs/.
+The direct-insert helpers (``link_*``, ``add_external_link``) exist for the HP-2
+tests that needed link rows before the link verbs existed; the HP-3 tests drive
+``link``/``unlink`` through the CLI and read the tables back with ``table_rows``.
+Nothing here reads docs/.
 """
 
 from __future__ import annotations
@@ -85,6 +86,14 @@ def add_spec(project: str = "shop", title: str = "Payments",
     )["id"]
 
 
+def add_doc(project: str = "shop", title: str = "Webhook flow", kind: str = "design",
+            summary: str = "How webhooks are processed.", **fields: Any) -> int:
+    """Create a DOC# through the store API; body options ride along in ``fields``."""
+    return store.create_entity(
+        project, "doc", {"title": title, "kind": kind, "summary": summary, **fields},
+    )["id"]
+
+
 def row(project: str, kind: str, entity_id: int) -> dict:
     """The raw stored row as a plain dict (no links, no history)."""
     return store.get_entity(project, f"{store.ref_for(kind, entity_id)}")["row"]
@@ -160,11 +169,14 @@ def status_of(project: str, kind: str, entity_id: int) -> str:
 
 # ------------------------------------------------------------------- set + capture
 def set_field(capsys, ref: str, *pairs: str, reason: str | None = None,
-              project: str | None = None) -> tuple[int, str, str]:
+              project: str | None = None,
+              override_reason: str | None = None) -> tuple[int, str, str]:
     """Run `set <REF> key=value ...`; returns (exit code, stdout, stderr)."""
     argv = ["set", ref, *pairs]
     if reason is not None:
         argv += ["--reason", reason]
+    if override_reason is not None:
+        argv += ["--override-reason", override_reason]
     if project is not None:
         argv += ["--project", project]
     rc = run(argv)
@@ -173,9 +185,46 @@ def set_field(capsys, ref: str, *pairs: str, reason: str | None = None,
 
 
 def move(capsys, ref: str, target: str, *pairs: str, reason: str | None = None,
-         project: str | None = None) -> tuple[int, str, str]:
+         project: str | None = None,
+         override_reason: str | None = None) -> tuple[int, str, str]:
     """`set <REF> status=<target> ...` with the extra key=value pairs applied too."""
-    return set_field(capsys, ref, f"status={target}", *pairs, reason=reason, project=project)
+    return set_field(capsys, ref, f"status={target}", *pairs, reason=reason,
+                     project=project, override_reason=override_reason)
+
+
+def cli(capsys, *argv: str) -> tuple[int, str, str]:
+    """Run any verb; returns (exit code, stdout, stderr)."""
+    rc = run(list(argv))
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+# ------------------------------------------------------------------- link tables
+#: the columns of each link table, in the order ``table_rows`` returns them
+LINK_COLUMNS: dict[str, tuple[str, ...]] = {
+    "feature_requirement": ("feature_id", "requirement_id"),
+    "spec_requirement": ("spec_id", "requirement_id"),
+    "feature_spec": ("feature_id", "spec_id"),
+    "feature_dependency": ("feature_id", "needs_id", "optional"),
+    "requirement_dependency": ("requirement_id", "needs_id"),
+    "spec_dependency": ("spec_id", "needs_id"),
+    "doc_link": ("doc_id", "entity_type", "entity_id"),
+}
+
+
+def table_rows(project: str, table: str) -> list[tuple]:
+    """Every row of one link table for ``project``, ordered by its columns.
+
+    Used to prove A6: a refused link leaves the table byte-for-byte unchanged.
+    """
+    columns = LINK_COLUMNS[table]
+    sql = (f"SELECT {', '.join(columns)} FROM {table}"
+           f" WHERE project = ? ORDER BY {', '.join(columns)}")
+    connection = store.connect()
+    try:
+        return [tuple(row) for row in connection.execute(sql, (project,))]
+    finally:
+        connection.close()
 
 
 def pass_criterion(capsys, entity_id: int, *, evidence: str = "test_pay_by_card",
