@@ -19,7 +19,7 @@ Detail (full statement, criteria text, notes, history) is returned only on reque
 
 | Command | Purpose |
 |---|---|
-| project add / list / use | Create a project, list projects, pick one. Without `--project`, the project whose `root` contains the working directory is used |
+| project add / list / use / set | Create a project, list projects, pick one, change its `name` or `root` (the slug never changes; `root=-` clears it). Without `--project`, the project whose `root` contains the working directory is used |
 | add | Create an R#, A#, F#, S# or DOC#. `--body` / `--body-file` store the defining text on an R#, F# or S# (or the body of a DOC#); on an A# they are refused, never dropped |
 | set | Change a field or status (validated) |
 | link / unlink | Create or remove a relation, or add a dependency edge |

@@ -35,6 +35,7 @@ EXPECTED_VERB_CARDS = {
     "project add": "HP-1",
     "project list": "HP-1",
     "project use": "HP-1",
+    "project set": "HP-17",
     "add": "HP-2",
     "set": "HP-2",
     "show": "HP-2",

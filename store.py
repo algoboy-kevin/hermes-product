@@ -449,6 +449,47 @@ def create_project(slug: str, name: str, root: Union[str, Path, None] = None,
             con.close()
 
 
+PROJECT_SET_FIELDS = ("name", "root")
+
+
+def update_project(slug: str, changes: dict, con: Optional[sqlite3.Connection] = None) -> dict:
+    """Change a project's ``name`` and/or ``root``; the slug is the key and never changes.
+
+    ``root`` is stored absolute (like ``create_project``); an empty value, ``-`` or
+    ``none`` clears it. An unknown key, an empty name or a missing project raises
+    ``StoreError`` and nothing is written.
+    """
+    if not changes:
+        raise StoreError("project set needs key=value pairs (name, root)")
+    for key in changes:
+        if key not in PROJECT_SET_FIELDS:
+            raise StoreError(f"unknown field {key!r} for a project;"
+                             f" editable keys are {', '.join(PROJECT_SET_FIELDS)}")
+    values: dict[str, Any] = {}
+    if "name" in changes:
+        name = str(changes["name"]).strip()
+        if not name:
+            raise StoreError("name must not be empty")
+        values["name"] = name
+    if "root" in changes:
+        raw = str(changes["root"]).strip()
+        values["root"] = (None if raw.lower() in ("", "-", "none", "null")
+                          else str(Path(raw).expanduser().resolve()))
+    own = con is None
+    con = con or connect()
+    try:
+        if not con.execute("SELECT 1 FROM project WHERE slug = ?", (slug,)).fetchone():
+            raise StoreError(f"project {slug!r} does not exist")
+        assignments = ", ".join(f"{name} = ?" for name in values)
+        with con:
+            con.execute(f"UPDATE project SET {assignments}, updated_at = ? WHERE slug = ?",
+                        (*values.values(), _now(), slug))
+        return {"slug": slug, "changed": list(values), **values}
+    finally:
+        if own:
+            con.close()
+
+
 def list_projects(con: Optional[sqlite3.Connection] = None) -> list:
     own = con is None
     con = con or connect()

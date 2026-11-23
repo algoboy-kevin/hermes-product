@@ -47,6 +47,7 @@ VERB_CARDS: dict[str, str] = {
     "project add": "HP-1",
     "project list": "HP-1",
     "project use": "HP-1",
+    "project set": "HP-17",
     "add": "HP-2",
     "set": "HP-2",
     "show": "HP-2",
@@ -72,7 +73,7 @@ _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 # HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
 # HP-6: trace and next; HP-7: lint; HP-8: scan-prd; HP-10: import-md; HP-12: sync;
 # HP-16: fold-docs).
-IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
+IMPLEMENTED = {"project add", "project list", "project use", "project set", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
                "lint", "scan-prd", "import-md", "sync", "fold-docs"}
 
@@ -100,7 +101,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         help="Create a project, list projects, pick one. Without --project, the "
              "project whose root contains the working directory is used",
     )
-    psubs = p_project.add_subparsers(dest="project_action", metavar="{add,list,use}")
+    psubs = p_project.add_subparsers(dest="project_action", metavar="{add,list,use,set}")
     p_pa = psubs.add_parser("add", help="Create a project")
     p_pa.add_argument("slug", help="Unique short key, lowercase, hyphenated")
     p_pa.add_argument("name", help="Display name")
@@ -110,6 +111,10 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_pl = psubs.add_parser("list", help="List projects")
     p_pu = psubs.add_parser("use", help="Pick a project")
     p_pu.add_argument("slug", help="Project slug")
+    p_ps = psubs.add_parser("set", help="Change a project's name or root")
+    p_ps.add_argument("slug", help="Project slug (the key; it never changes)")
+    p_ps.add_argument("pairs", nargs="+", metavar="key=value",
+                      help="name=... and/or root=... (root=- clears it)")
 
     # ---- add <R|A|F|S|DOC> ...: one parser, the flags of every kind, checked per kind.
     p_add = subs.add_parser("add", help="Create an R#, A#, F#, S# or DOC#")
@@ -443,6 +448,19 @@ def _project_add(args: argparse.Namespace) -> int:
     """`project add <slug> <name> [--root PATH]` -> `project <slug> created`."""
     created = store.create_project(args.slug, args.name, root=args.root)
     print(f"project {created['slug']} created")
+    return EXIT_OK
+
+
+def _project_set(args: argparse.Namespace) -> int:
+    """`project set <slug> name=... root=...` -> `project <slug> updated: name, root`."""
+    changes: dict[str, str] = {}
+    for pair in args.pairs:
+        if "=" not in pair:
+            raise model.ValidationError(f"expected key=value, got {pair!r}")
+        key, value = pair.split("=", 1)
+        changes[key.strip()] = value
+    result = store.update_project(args.slug, changes)
+    print(f"project {result['slug']} updated: {', '.join(result['changed'])}")
     return EXIT_OK
 
 
@@ -1107,6 +1125,7 @@ _IMPLEMENTED_HANDLERS = {
     "project add": _project_add,
     "project list": _project_list,
     "project use": _project_use,
+    "project set": _project_set,
     "add": _cmd_add,
     "set": _cmd_set,
     "list": _cmd_list,
