@@ -197,7 +197,7 @@ def test_changed_file_is_reported_and_only_updated_on_request(shop, capsys, tmp_
 
 def test_update_without_apply_is_refused(shop, capsys, tmp_path) -> None:
     rc, _out, err = cli(capsys, "adopt", str(_tree(tmp_path / "r")), "--update")
-    assert rc == 1 and "--update needs --apply" in err
+    assert rc == 1 and "--update and --link-mentions need --apply" in err
 
 
 def test_a_prd_already_in_the_project_makes_the_next_one_context(shop, capsys, tmp_path) -> None:
@@ -252,3 +252,78 @@ def test_missing_directory_and_project(shop, capsys, tmp_path) -> None:
     assert rc == 1 and "is not a directory" in err
     rc, _out, err = cli(capsys, "adopt", str(tmp_path), "--project", "ghost")
     assert rc == 1 and "does not exist" in err
+
+
+# ---------------------------------------------------------------- --only, --link-mentions
+def _ctx_tree(root: Path) -> Path:
+    files = {
+        "docs/ARCHITECTURE.md": "# Architecture\n\nOne process quotes many symbols across venues with"
+                                " a shared risk layer in front.\n",
+        "docs/REQUOTE-POLICY.md": "# Requote policy\n\nNotes on a touch-relative deadband and"
+                                  " coalesced batches for the requote loop.\n",
+        "docs/RUNBOOK.md": "# Runbook\n\nHow to start, watch and stop the driver on the live host.\n",
+        "docs/TESTNET-RUNBOOK.md": "# Testnet runbook\n\nHow to run the driver against the testnet"
+                                   " host before any mainnet launch.\n",
+        "docs/specs/S1-core.md": "# Core\n\nDecimal arithmetic and the order book used everywhere.\n",
+    }
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return root
+
+
+def test_only_limits_the_pass_to_matching_paths(shop, capsys, tmp_path) -> None:
+    root = _ctx_tree(tmp_path / "repo")
+    rc, out, err = cli(capsys, "adopt", str(root), "--only", "docs/ARCHITECTURE.md",
+                       "--only", "docs/*POLICY*.md", "--apply")
+    assert rc == 0, err
+    assert "created 2" in out
+    assert sorted(d["title"] for d in store.list_entities("shop", "doc")) == [
+        "Architecture", "Requote policy"]
+    assert store.list_entities("shop", "spec") == []        # not even listed, let alone written
+    assert "S1-core" not in out
+
+
+def test_link_mentions_links_docs_to_the_entries_that_name_them(shop, capsys, tmp_path) -> None:
+    root = _ctx_tree(tmp_path / "repo")
+    store.create_entity("shop", "spec", {                                    # S1
+        "title": "Engine", "summary": "How the engine loops over symbols and venues.",
+        "notes": "see docs/ARCHITECTURE.md section 8"})
+    store.create_entity("shop", "feature", {                                 # F1
+        "title": "Requote deadband", "layer": "core", "slug": "requote",
+        "description": "Touch-relative deadband, from REQUOTE-POLICY.md, not yet built."})
+    store.create_entity("shop", "feature", {                                 # F2
+        "title": "Runbook work", "layer": "core", "slug": "ops",
+        "description": "Follows the TESTNET-RUNBOOK.md steps only."})
+    store.create_entity("shop", "requirement", {                             # R1
+        "title": "Quote safely", "statement": "The driver shall quote only inside the risk limits.",
+        "priority": "must", "body": "Defined across docs/ARCHITECTURE.md and the policy."})
+    store.create_entity("shop", "spec", {                                    # S2: retired
+        "title": "Old engine", "summary": "Superseded engine notes, kept for history.",
+        "notes": "docs/ARCHITECTURE.md"})
+    store.update_entity("shop", "S2", {"status": "superseded", "superseded_by": "S1"})
+
+    rc, out, err = cli(capsys, "adopt", str(root), "--only", "docs/*.md", "--apply",
+                       "--link-mentions")
+    assert rc == 0, err
+    refs = {d["title"]: d["ref"] for d in store.list_entities("shop", "doc")}
+
+    def linked(doc_title: str) -> set:
+        return {f"{k[0].upper() if k != 'criterion' else 'A'}{i}" for k, i in
+                store.doc_link_refs(store.connect(), "shop", int(refs[doc_title][3:]))}
+
+    assert linked("Architecture") == {"S1", "R1"}           # S2 is retired: not linked
+    assert linked("Requote policy") == {"F1"}
+    assert linked("Testnet runbook") == {"F2"}
+    assert linked("Runbook") == set()                      # "TESTNET-RUNBOOK.md" is not "RUNBOOK.md"
+    assert f"  + {refs['Architecture']} <-> S1" in out
+    assert "linked 4 mentions (0 already linked, 0 refused)" in out
+    # rerun: nothing new, the existing links are counted
+    rc, out, err = cli(capsys, "adopt", str(root), "--only", "docs/*.md", "--apply", "--link-mentions")
+    assert rc == 0 and "linked 0 mentions (4 already linked, 0 refused)" in out
+
+
+def test_link_mentions_and_update_need_apply(shop, capsys, tmp_path) -> None:
+    rc, _out, err = cli(capsys, "adopt", str(_ctx_tree(tmp_path / "r")), "--link-mentions")
+    assert rc == 1 and "need --apply" in err

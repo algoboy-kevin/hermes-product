@@ -290,6 +290,12 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_adopt.add_argument("dir", metavar="DIR", help="The repository (or docs) directory to scan")
     p_adopt.add_argument("--apply", action="store_true", default=False,
                          help="Write the proposed rows (each file is its own transaction)")
+    p_adopt.add_argument("--only", action="append", default=None, metavar="GLOB",
+                         help="Only files whose relative path matches this glob (repeatable),"
+                              " e.g. --only 'docs/ARCHITECTURE.md' --only 'docs/*POLICY*.md'")
+    p_adopt.add_argument("--link-mentions", dest="link_mentions", action="store_true", default=False,
+                         help="With --apply: link each adopted DOC to every live R#/F#/S# whose"
+                              " text names its file")
     p_adopt.add_argument("--update", action="store_true", default=False,
                          help="With --apply: also refresh the body of rows whose file changed")
     p_adopt.add_argument("--json", dest="adopt_json", action="store_true", default=False,
@@ -869,10 +875,13 @@ def _cmd_import(args: argparse.Namespace) -> int:
 def _cmd_adopt(args: argparse.Namespace) -> int:
     """`adopt DIR [--apply] [--update]` -> a diff-like plan, or the applied counts (HP-19)."""
     project = _project(args)
-    found = adopt.plan(project, args.dir)
+    if (args.update or args.link_mentions) and not args.apply:
+        raise model.ValidationError("--update and --link-mentions need --apply")
+    found = adopt.plan(project, args.dir, only=args.only)
     counts = adopt.apply(project, found, update=args.update) if args.apply else None
-    if args.update and not args.apply:
-        raise model.ValidationError("--update needs --apply")
+    linked = adopt.link_mentions(project, found["rows"]) if args.apply and args.link_mentions else None
+    if linked is not None:
+        found["linked"] = linked
     code = EXIT_ERROR if counts and counts["failed"] else EXIT_OK
     if args.adopt_json:
         rows = [{key: row.get(key) for key in ("path", "target", "doc_kind", "action", "ref",
@@ -880,6 +889,8 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
                                                "error")} for row in found["rows"]]
         print(json.dumps({"ok": code == 0, "project": project, "root": found["root"],
                           "applied": bool(args.apply), "counts": counts, "rows": rows,
+                          "links": linked and {"linked": linked["linked"], "existing": linked["existing"],
+                                               "refused": linked["refused"]},
                           "skipped": found["skipped"]}, ensure_ascii=False))
         return code
     for line in adopt.render(project, found, counts=counts, update=args.update):
