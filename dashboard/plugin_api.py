@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import importlib
+import importlib.util
 import json
 import re
 import sqlite3
@@ -39,12 +41,35 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-if str(_PLUGIN_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PLUGIN_ROOT))
+_PKG = "hermes_product_pkg"
 
-import graph as graph_model  # noqa: E402 - same plugin root
-import model  # noqa: E402
-import store  # noqa: E402
+
+def _plugin_package():
+    """The plugin root as a PRIVATE package.
+
+    The Hermes server runs every plugin in one interpreter, and other plugins (feature-graph)
+    ship top-level ``store.py`` / ``graph.py`` too: a plain ``import store`` returns whichever
+    loaded first. Importing through a uniquely named package never touches the bare names.
+    """
+    package = sys.modules.get(_PKG)
+    if package is None:
+        spec = importlib.util.spec_from_file_location(
+            _PKG, _PLUGIN_ROOT / "__init__.py", submodule_search_locations=[str(_PLUGIN_ROOT)]
+        )
+        package = importlib.util.module_from_spec(spec)
+        sys.modules[_PKG] = package
+        try:
+            spec.loader.exec_module(package)
+        except Exception:
+            sys.modules.pop(_PKG, None)
+            raise
+    return package
+
+
+_plugin_package()
+graph_model = importlib.import_module(f"{_PKG}.graph")
+model = importlib.import_module(f"{_PKG}.model")
+store = importlib.import_module(f"{_PKG}.store")
 
 router = APIRouter()
 
