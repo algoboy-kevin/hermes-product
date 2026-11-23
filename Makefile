@@ -1,4 +1,4 @@
-.PHONY: help test doctor link unlink sync enable disable validate clean
+.PHONY: help test test-ui doctor link unlink sync enable disable validate clean
 
 PLUGIN_DIR  := product
 DEV_LINK    := $(HOME)/.hermes/plugins/$(PLUGIN_DIR)
@@ -7,6 +7,7 @@ REPO        := $(shell pwd)
 
 help:
 	@echo "make test      run the test suite (pytest; uv fallback pulls ruamel/pytest)"
+	@echo "make test-ui   desktop page tests (node: core logic + register/render smoke)"
 	@echo "make doctor    validate manifest + register(ctx) via hermes plugins doctor"
 	@echo "make validate  catalog admission checks (hermes plugins validate)"
 	@echo "make sync      copy this repo into ~/.hermes/plugins/product  <-- use this"
@@ -17,10 +18,16 @@ help:
 	@echo "make disable   disable it again"
 
 test:
-	@if python3 -c "import pytest, ruamel.yaml" 2>/dev/null; then python3 -m pytest tests -q; \
+	@if python3 -c "import pytest, ruamel.yaml, fastapi, httpx" 2>/dev/null; then python3 -m pytest tests -q; \
 	else env -u VIRTUAL_ENV -u PYTHONPATH uv run --no-project --with pytest \
-		--with "ruamel.yaml>=0.18,<0.19" \
+		--with "ruamel.yaml>=0.18,<0.19" --with fastapi --with httpx \
 		--python 3.12 python -m pytest tests -q; fi
+
+# The desktop page: pure core logic under node:test, then the register/render
+# smoke test that imports the REAL desktop/plugin.js through stub SDK/react
+# modules. No npm, no build step, no node_modules (see tests/ui/loader-hooks.mjs).
+test-ui:
+	node --test tests/ui/core.test.mjs && node tests/ui/esm-render.mjs
 
 doctor:
 	hermes plugins doctor $(REPO)
