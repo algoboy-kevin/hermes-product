@@ -9,7 +9,8 @@ needs (DOC2 / A26-A33) is served from the Hermes store:
   GET  /project/{slug}/prd                the PRD document as markdown
   GET  /project/{slug}/states             workflow order per kind (DOC2 behaviour 5)
   GET  /project/{slug}/entries?kind=...   cards by state, with counts
-  GET  /project/{slug}/entry/{ref}        one entry: fields, links, docs, history
+  GET  /project/{slug}/entry/{ref}        one entry: fields, links, docs, history, body_chars
+  GET  /project/{slug}/entry/{ref}/body   its body text, bounded (?section=H&max_chars=N)
   GET  /project/{slug}/graph              features, dependency edges, critical path
 
 Read-only by construction: every GET opens ``product.db`` with ``mode=ro`` plus
@@ -70,6 +71,7 @@ _plugin_package()
 graph_model = importlib.import_module(f"{_PKG}.graph")
 model = importlib.import_module(f"{_PKG}.model")
 store = importlib.import_module(f"{_PKG}.store")
+docs_text = importlib.import_module(f"{_PKG}.docs_text")
 
 router = APIRouter()
 
@@ -438,7 +440,8 @@ def _doc_link_lists(entries: list[dict]) -> dict:
 @_guarded
 def project_entry(slug: str, ref: str):
     with _reading() as con:
-        if con is None or _known_project(con, slug) is None:
+        project = _known_project(con, slug) if con is not None else None
+        if project is None:
             return _error(404, "no such project")
         try:
             entry = store.get_entity(slug, ref, con=con)
@@ -447,6 +450,8 @@ def project_entry(slug: str, ref: str):
         except store.StoreError as exc:
             return _error(404, str(exc))
         kind = entry["kind"]
+        body_chars = (len(_doc_markdown(project, entry["row"])) if kind == "doc"
+                      else int(entry["row"].get("body_chars") or 0))
         links = _doc_link_lists(entry.get("doc_links") or []) if kind == "doc" else entry["links"]
         docs = [{"ref": model.format_ref("doc", doc["id"]), "kind": doc["kind"],
                  "title": doc["title"], "summary": doc["summary"], "status": doc["status"]}
@@ -460,8 +465,48 @@ def project_entry(slug: str, ref: str):
         "links": links,
         "docs": docs,
         "history": history,
+        "body_chars": body_chars,
         "command": f"hermes product set {entry['ref']} key=value",
     }
+
+
+#: the page's own cap for one body read; the CLI's `show --body` allows up to 100000
+BODY_PAGE_MAX = 100000
+
+
+@router.get("/project/{slug}/entry/{ref}/body")
+@_guarded
+def project_entry_body(slug: str, ref: str, section: Optional[str] = None,
+                       max_chars: int = Query(20000, ge=1, le=BODY_PAGE_MAX)):
+    """One entry's body text, bounded, optionally one Markdown section (read-only)."""
+    with _reading() as con:
+        project = _known_project(con, slug) if con is not None else None
+        if project is None:
+            return _error(404, "no such project")
+        try:
+            entry = store.get_entity(slug, ref, with_body=True, con=con)
+        except model.ValidationError as exc:
+            return _error(400, str(exc))
+        except store.StoreError as exc:
+            return _error(404, str(exc))
+        kind = entry["kind"]
+        if kind == "criterion":
+            return _error(400, f"{entry['ref']} has no body")
+        text = (_doc_markdown(project, entry["row"]) if kind == "doc"
+                else (entry["row"].get("body") or ""))
+    if section is not None:
+        found = docs_text.section(text, section)
+        if found is None:
+            names = [name for _lvl, name, _a, _b in docs_text.headings(text)][:20]
+            return _error(400, f"no section {section!r} in {entry['ref']}"
+                               f" (headings: {', '.join(names) or 'none'})")
+        text = found
+    piece, total, truncated = docs_text.bounded(text, max_chars)
+    return {"ref": entry["ref"], "section": section, "text": piece, "total": total,
+            "truncated": truncated,
+            "command": f"hermes product show {entry['ref']} --body"
+                       + (f" --section {section!r}" if section else "")
+                       + (f" --max-chars {BODY_PAGE_MAX}" if truncated else "")}
 
 
 # ----------------------------------------------------------------------- /graph

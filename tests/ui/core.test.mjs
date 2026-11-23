@@ -411,3 +411,20 @@ test("errorMessage digs the server's message out of whatever the host throws", (
   assert.equal(core.errorMessage("plain string"), "plain string")
   assert.equal(core.errorMessage(null), "The backend rejected that request.")
 })
+
+
+// ------------------------------------------------------------------- entry bodies
+test("bodySizeLabel says chars below 1 KB and KB above", () => {
+  assert.equal(core.bodySizeLabel(42), "42 chars")
+  assert.equal(core.bodySizeLabel(1023), "1023 chars")
+  assert.equal(core.bodySizeLabel(1024), "1.0 KB")
+  assert.equal(core.bodySizeLabel(10844), "10.6 KB")
+  assert.equal(core.bodySizeLabel(undefined), "0 chars")
+})
+
+test("bodyPath builds the read-only body route, encoding the ref and the options", () => {
+  assert.equal(core.bodyPath("shop", "S1"), "/project/shop/entry/S1/body")
+  assert.equal(core.bodyPath("shop", "S1", { section: "A & B", maxChars: 500 }),
+    "/project/shop/entry/S1/body?section=A%20%26%20B&max_chars=500")
+  assert.equal(core.bodyPath("shop", "DOC12"), "/project/shop/entry/DOC12/body")
+})

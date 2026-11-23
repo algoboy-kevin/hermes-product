@@ -1,0 +1,222 @@
+{
+  "bodies": {
+    "DOC1": {
+      "command": "hermes product show DOC1 --body",
+      "ref": "DOC1",
+      "section": null,
+      "text": "# Run 1\n\nCharged 31 cards.\n",
+      "total": 27,
+      "truncated": false
+    },
+    "S1": {
+      "command": "hermes product show S1 --body",
+      "ref": "S1",
+      "section": null,
+      "text": "# Payments contract\n\nCharge a card with a PaymentIntent and 3DS.\n\n## Webhooks\n\nVerify the signature, then record the event once.\n\n## Limits\n\nNo retries after a hard decline.\n",
+      "total": 174,
+      "truncated": false
+    },
+    "S1#Webhooks": {
+      "command": "hermes product show S1 --body --section 'Webhooks'",
+      "ref": "S1",
+      "section": "Webhooks",
+      "text": "## Webhooks\n\nVerify the signature, then record the event once.\n\n",
+      "total": 64,
+      "truncated": false
+    },
+    "S1#cut": {
+      "command": "hermes product show S1 --body --max-chars 100000",
+      "ref": "S1",
+      "section": null,
+      "text": "# Payments contract\n\nCharge a card with a PaymentIntent and ",
+      "total": 174,
+      "truncated": true
+    }
+  },
+  "entries": {
+    "A1": {
+      "body_chars": 0,
+      "command": "hermes product set A1 key=value",
+      "docs": [],
+      "fields": {
+        "evidence": "test_charge",
+        "id": 1,
+        "requirement_id": 1,
+        "status": "passed",
+        "text": "Given a card, then it is charged",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "status not_run -> passed",
+          "reason": null
+        }
+      ],
+      "kind": "criterion",
+      "links": {},
+      "ref": "A1"
+    },
+    "DOC1": {
+      "body_chars": 27,
+      "command": "hermes product set DOC1 key=value",
+      "docs": [],
+      "fields": {
+        "id": 1,
+        "kind": "report",
+        "status": "current",
+        "summary": "What the first run measured.",
+        "title": "Run report",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked S1",
+          "reason": null
+        }
+      ],
+      "kind": "doc",
+      "links": {
+        "criterion": [],
+        "feature": [],
+        "requirement": [],
+        "spec": [
+          1
+        ]
+      },
+      "ref": "DOC1"
+    },
+    "F1": {
+      "body_chars": 0,
+      "command": "hermes product set F1 key=value",
+      "docs": [],
+      "fields": {
+        "description": "Card payments through Stripe",
+        "id": 1,
+        "layer": "core",
+        "slug": "stripe",
+        "status": "planned",
+        "title": "Stripe",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked R1",
+          "reason": null
+        }
+      ],
+      "kind": "feature",
+      "links": {
+        "needs": [],
+        "requirements": [
+          1
+        ],
+        "specs": []
+      },
+      "ref": "F1"
+    },
+    "R1": {
+      "body_chars": 42,
+      "command": "hermes product set R1 key=value",
+      "docs": [],
+      "fields": {
+        "id": 1,
+        "phase": "mvp",
+        "priority": "must",
+        "statement": "A buyer can pay by card at checkout",
+        "status": "draft",
+        "title": "Pay by card",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked S1",
+          "reason": null
+        },
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked F1",
+          "reason": null
+        }
+      ],
+      "kind": "requirement",
+      "links": {
+        "criteria": [
+          1,
+          2
+        ],
+        "criteria_passed": 1,
+        "criteria_total": 2,
+        "features": [
+          1
+        ],
+        "specs": [
+          1
+        ]
+      },
+      "ref": "R1"
+    },
+    "S1": {
+      "body_chars": 174,
+      "command": "hermes product set S1 key=value",
+      "docs": [
+        {
+          "kind": "report",
+          "ref": "DOC1",
+          "status": "current",
+          "summary": "What the first run measured.",
+          "title": "Run report"
+        }
+      ],
+      "fields": {
+        "id": 1,
+        "status": "draft",
+        "summary": "How a card is charged.",
+        "title": "Payments",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked DOC1",
+          "reason": null
+        },
+        {
+          "at": "2026-11-23T12:00:00+00:00",
+          "change": "linked R1",
+          "reason": null
+        }
+      ],
+      "kind": "spec",
+      "links": {
+        "features": [],
+        "requirements": [
+          1
+        ]
+      },
+      "ref": "S1"
+    },
+    "S2": {
+      "body_chars": 0,
+      "command": "hermes product set S2 key=value",
+      "docs": [],
+      "fields": {
+        "id": 2,
+        "status": "draft",
+        "summary": "How cards are saved.",
+        "title": "Saved cards",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [],
+      "kind": "spec",
+      "links": {
+        "features": [],
+        "requirements": []
+      },
+      "ref": "S2"
+    }
+  }
+}

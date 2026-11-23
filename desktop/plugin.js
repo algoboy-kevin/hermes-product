@@ -343,6 +343,21 @@ function layoutGraph(nodes, edges, critical) {
   return { nodes: placed, edges: lines, width, height }
 }
 
+/** "6.9 KB" / "812 chars": how much text sits behind the Show body button. */
+const bodySizeLabel = (chars) => {
+  const n = Number(chars) || 0
+  return n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " chars"
+}
+
+/** The API route for one entry's body (read-only, bounded by the server). */
+const bodyPath = (project, ref, options = {}) => {
+  const query = []
+  if (options.section) query.push("section=" + encodeURIComponent(options.section))
+  if (options.maxChars) query.push("max_chars=" + encodeURIComponent(options.maxChars))
+  return "/project/" + project + "/entry/" + encodeURIComponent(ref) + "/body"
+    + (query.length ? "?" + query.join("&") : "")
+}
+
 export const core = {
   VIEWS,
   VIEW_LABEL,
@@ -363,6 +378,8 @@ export const core = {
   validProjectSlug,
   newProjectPayload,
   errorMessage,
+  bodySizeLabel,
+  bodyPath,
   layoutGraph,
   NODE_W,
   NODE_H
@@ -746,20 +763,60 @@ const fieldValue = (value) => {
   return String(value)
 }
 
+/** Prefix per link key: the API uses plural keys and a few singular ones. */
+const LINK_PREFIX = {
+  features: "F", needs: "F", specs: "S", criteria: "A", requirements: "R",
+  feature: "F", spec: "S", criterion: "A", requirement: "R", doc: "DOC"
+}
+
 const formatLinks = (links) => {
   const out = []
-  for (const [kind, values] of Object.entries(links || {})) {
-    const refs = (values || []).map((value) =>
-      typeof value === "number" ? (REF_PREFIX[kind] || "") + value : String(value))
-    if (refs.length) out.push([REF_PREFIX[kind] || kind, refs.join(" ")])
+  if (!links || typeof links !== "object") return out
+  // A requirement's links carry two counters next to the id lists (store.links_of);
+  // they are numbers, not arrays, and must never reach values.map.
+  const total = typeof links.criteria_total === "number" ? links.criteria_total : null
+  const passed = typeof links.criteria_passed === "number" ? links.criteria_passed : null
+  for (const [kind, values] of Object.entries(links)) {
+    if (kind === "criteria_total" || kind === "criteria_passed") continue
+    const list = Array.isArray(values) ? values : values == null ? [] : [values]
+    const prefix = LINK_PREFIX[kind] || REF_PREFIX[kind] || kind
+    const refs = list.map((value) => String(value))
+    if (refs.length) out.push([prefix, refs.join(" ")])
+  }
+  if (total !== null && total > 0) {
+    out.push(["criteria", (passed || 0) + "/" + total + " passed"])
   }
   return out
 }
 
 /** The docked detail panel: fields, links, doc summaries, history, the edit command (A33). */
-function DetailPanel({ detail, loading, error, onClose }) {
+function DetailPanel({ detail, loading, error, onClose, loadBody }) {
   const [copied, setCopied] = useState(false)
   const command = (detail && detail.command) || ""
+  const [body, setBody] = useState({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+  const ref = (detail && detail.ref) || ""
+  // a new entry starts with its body closed: the text is read only when asked for
+  useEffect(() => {
+    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+  }, [ref])
+  const showBody = () => {
+    if (!loadBody || !ref) return
+    setBody((previous) => ({ ...previous, state: "loading", error: "" }))
+    Promise.resolve(loadBody(ref))
+      .then((payload) => setBody({
+        state: "ready",
+        text: (payload && payload.text) || "",
+        truncated: Boolean(payload && payload.truncated),
+        total: (payload && payload.total) || 0,
+        command: (payload && payload.command) || "",
+        error: ""
+      }))
+      .catch((failure) => setBody({
+        state: "error", text: "", truncated: false, total: 0, command: "", error: errorMessage(failure)
+      }))
+  }
+  const hideBody = () =>
+    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
 
   const copy = () => {
     try {
@@ -827,6 +884,49 @@ function DetailPanel({ detail, loading, error, onClose }) {
                 h("span", { style: { ...sectionLabel, marginBottom: 0 } }, stateLabel(key)),
                 h("span", { style: { fontSize: 12, color: UI.text, wordBreak: "break-word" } },
                   fieldValue(value))))))
+          : null,
+
+        detail.body_chars > 0
+          ? section("Body", h("div", { "data-testid": "body-section", style: { display: "flex", flexDirection: "column", gap: 6 } },
+            body.state === "idle"
+              ? h("button", {
+                type: "button",
+                "data-testid": "body-toggle",
+                onClick: showBody,
+                style: {
+                  alignSelf: "flex-start", border: "1px solid " + UI.stroke, borderRadius: 6,
+                  background: "transparent", color: UI.text, fontSize: 12, padding: "4px 10px", cursor: "pointer"
+                }
+              }, "Show body (" + bodySizeLabel(detail.body_chars) + ")")
+              : null,
+            body.state === "loading" ? h(Loader, null) : null,
+            body.state === "error"
+              ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
+              : null,
+            body.state === "ready"
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                h("div", {
+                  "data-testid": "body-text",
+                  style: {
+                    maxHeight: 420, overflow: "auto", border: "1px solid " + UI.stroke,
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12
+                  }
+                }, h(Streamdown, null, body.text)),
+                body.truncated
+                  ? h("p", { "data-testid": "body-truncated", style: mutedText },
+                    "Showing the first " + body.text.length + " of " + body.total
+                    + " characters. Read the rest with: " + body.command)
+                  : null,
+                h("button", {
+                  type: "button",
+                  "data-testid": "body-hide",
+                  onClick: hideBody,
+                  style: {
+                    alignSelf: "flex-start", border: 0, background: "transparent", color: UI.tertiary,
+                    fontSize: 11, padding: 0, cursor: "pointer"
+                  }
+                }, "Hide body"))
+              : null))
           : null,
 
         links.length
@@ -1145,7 +1245,8 @@ function ProductPage({ ctx }) {
             detail: detailOne,
             loading: detailLoading,
             error: detailError,
-            onClose: closeDetail
+            onClose: closeDetail,
+            loadBody: (ref) => ctx.rest(bodyPath(project, ref))
           })
           : null)),
 

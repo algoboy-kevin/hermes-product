@@ -24,6 +24,9 @@ import { register } from "node:module"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_PATH = join(__dirname, "..", "..", "desktop", "plugin.js")
+// Payloads the REAL API produced (tests/test_ui_fixtures.py regenerates and compares them):
+// a fixture the page author shapes proves what the author believed, not what the API returns.
+const REAL = JSON.parse(readFileSync(join(__dirname, "fixtures", "api-entries.json"), "utf8"))
 
 // --------------------------------------------------------------------------- harness
 let failures = 0
@@ -419,7 +422,7 @@ const detailFor = (ref, kind) => ({
         priority: "must", phase: "mvp", status: "draft" },
   links: kind === "doc"
     ? { requirement: [1], criterion: [], feature: [], spec: [] }
-    : { features: [1], specs: [1], criteria: [1, 2] },
+    : { features: [1], specs: [1], criteria: [1, 2], criteria_total: 2, criteria_passed: 1 },
   docs: [{ ref: "DOC1", kind: "design", title: "Webhook flow",
     summary: "How Stripe webhooks are processed.", status: "current" }],
   history: [
@@ -444,7 +447,9 @@ function fakeServer(options = {}) {
     duplicateSlug: options.duplicateSlug || "",
     decks: { shop: shopDeck(), mobile: mobileDeck() },
     prd: { ...PRD },
-    graphs: { ...GRAPHS }
+    graphs: { ...GRAPHS },
+    real: Boolean(options.real),
+    truncate: Boolean(options.truncate)
   }
   const ctx = {
     rest: (path, opts) => {
@@ -480,9 +485,18 @@ function fakeServer(options = {}) {
         const deck = state.decks[found[1]] || mobileDeck()
         return Promise.resolve(deck[found[2]] || entriesOf(found[2], []))
       }
+      found = /^\/project\/([^/]+)\/entry\/([^/?]+)\/body(\?.*)?$/.exec(path)
+      if (found && state.real) {
+        const ref = decodeURIComponent(found[2])
+        const key = state.truncate && REAL.bodies[ref + "#cut"] ? ref + "#cut" : ref
+        const body = REAL.bodies[key]
+        return body ? Promise.resolve(body)
+          : Promise.reject(Object.assign(new Error("no such body"), { status: 404 }))
+      }
       found = /^\/project\/([^/]+)\/entry\/(.+)$/.exec(path)
       if (found) {
         const ref = decodeURIComponent(found[2])
+        if (state.real && REAL.entries[ref]) return Promise.resolve(REAL.entries[ref])
         const kind = ref.startsWith("A") ? "criterion" : ref.startsWith("F") ? "feature"
           : ref.startsWith("S") ? "spec" : ref.startsWith("DOC") ? "doc" : "requirement"
         return Promise.resolve(detailFor(ref, kind))
@@ -516,6 +530,7 @@ const tabs = () => byId("status-tab")
 const tabOf = (name) => tabs().find((node) => node.props["data-tab"] === name)
 const cards = () => byId("card")
 const cardRefs = () => cards().map((node) => node.props["data-ref"])
+const cardOf = (ref) => cards().find((node) => node.props["data-ref"] === ref)
 const focus = () => byId("focus-view")
 const writes = () => withProps((props) => props["data-write"] === "1")
 
@@ -702,6 +717,10 @@ const panelText = text(one("detail-panel"))
 check(panelText.includes("Pay by card"), "A30: the detail names the entry")
 check(panelText.includes("A buyer can pay by card at checkout"), "A30: the detail shows the fields")
 check(panelText.includes("Webhook flow"), "A30: the detail lists the linked document")
+// The API gives a requirement both id lists and two counters (store.links_of); the counters
+// are numbers and used to reach values.map — the page crashed on every requirement card.
+check(panelText.includes("criteria 1/2 passed"), "A30: requirement links show criteria progress")
+check(panelText.includes("F 1") && panelText.includes("S 1"), "A30: link chips use reference prefixes")
 check(panelText.includes("How Stripe webhooks are processed."), "A30: the linked doc shows its summary line")
 check(one("detail-command") !== undefined && text(one("detail-command")).includes("hermes product set R1"),
   "A33: the detail shows the command that edits the entry")
@@ -869,6 +888,50 @@ await click("new-project-empty")
 check(one("new-project-dialog") !== undefined, "A26: and it opens the dialog")
 check(writes().every((node) => text(node).includes("New project")),
   "A33: with no projects the only write control is still New project")
+
+// =========================================================================== session E
+// -- entry bodies (schema v2), rendered from the REAL API payloads -----------------
+await open({ real: true })
+await clickView("requirements")
+await clickNode(cardOf("R1"), "open real R1")
+noRenderErrors("real R1 detail")
+const realR1 = text(one("detail-panel"))
+check(realR1.includes("criteria 1/2 passed"),
+  "real payload: a requirement's counters render as progress, not as an id list")
+check(one("body-section") !== undefined && text(one("body-toggle")).includes("Show body (42 chars)"),
+  "body: an entry with a body offers it with its size")
+check(matches("/project/shop/entry/R1/body").length === 0 && one("body-text") === undefined,
+  "body: nothing is fetched or shown until it is asked for")
+await clickView("specs")
+await clickNode(cardOf("S1"), "open real S1")
+noRenderErrors("real S1 detail")
+check(text(one("body-toggle")).includes("Show body (") && text(one("body-toggle")).includes("chars"),
+  "body: S1 offers its body (size line)")
+check(one("body-text") === undefined, "body: a newly opened entry starts closed")
+await click("body-toggle")
+noRenderErrors("body open")
+check(matches("/project/shop/entry/S1/body").length === 1, "body: Show body fetches the body route once")
+check(one("body-text") !== undefined && text(one("body-text")).includes("Verify the signature"),
+  "body: the text reaches the markdown renderer")
+check(one("body-toggle") === undefined && one("body-truncated") === undefined,
+  "body: the toggle is replaced by the text and a short body is not marked truncated")
+// switch away WITHOUT hiding: the open body must not follow the selection
+await clickNode(cardOf("S2"), "open real S2 (no body)")
+check(one("body-section") === undefined, "body: an entry without a body shows no body section")
+await clickNode(cardOf("S1"), "reopen real S1")
+check(one("body-text") === undefined && one("body-toggle") !== undefined,
+  "body: switching entries closes the previous body (it is read only when asked for)")
+await click("body-toggle")
+await click("body-hide")
+check(one("body-text") === undefined && one("body-toggle") !== undefined, "body: Hide returns to the closed state")
+
+await open({ real: true, truncate: true })
+await clickView("specs")
+await clickNode(cardOf("S1"), "open real S1 (long)")
+await click("body-toggle")
+check(one("body-truncated") !== undefined
+  && text(one("body-truncated")).includes("hermes product show S1 --body --max-chars 100000"),
+  "body: a truncated read says how many characters it hid and how to read the rest")
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)

@@ -551,3 +551,52 @@ def test_entry_payload_never_carries_a_body_text(home: Path, seeded: str) -> Non
     assert "body" not in response.json()["fields"]
     listing = _client().get(f"/project/{seeded}/entries", params={"kind": "S"})
     assert "SECRET-BODY-TEXT" not in listing.text
+
+
+# --------------------------------------------------------------- bodies on the page (v2)
+_PAGE_BODY = "# Contract\n\nIntro line.\n\n## Parity\n\nLive rows equal research rows.\n\n## Limits\n\nNone.\n"
+
+
+def test_entry_payload_reports_the_body_size(home: Path, seeded: str) -> None:
+    store.update_entity(seeded, "S1", {"body": _PAGE_BODY})
+    payload = _client().get(f"/project/{seeded}/entry/S1").json()
+    assert payload["body_chars"] == len(_PAGE_BODY)
+    assert _client().get(f"/project/{seeded}/entry/S2").json()["body_chars"] == 0
+    assert _client().get(f"/project/{seeded}/entry/R1").json()["body_chars"] == 0
+
+
+def test_body_route_reads_text_section_and_truncation(home: Path, seeded: str) -> None:
+    store.update_entity(seeded, "S1", {"body": _PAGE_BODY})
+    url = f"/project/{seeded}/entry/S1/body"
+    full = _client().get(url).json()
+    assert full["text"] == _PAGE_BODY and full["total"] == len(_PAGE_BODY)
+    assert full["truncated"] is False and full["command"] == "hermes product show S1 --body"
+    cut = _client().get(url, params={"max_chars": 10}).json()
+    assert cut["text"] == _PAGE_BODY[:10] and cut["truncated"] is True
+    assert "--max-chars 100000" in cut["command"]
+    part = _client().get(url, params={"section": "Parity"}).json()
+    assert part["text"].startswith("## Parity") and "Limits" not in part["text"]
+    missing = _client().get(url, params={"section": "Nope"})
+    assert missing.status_code == 400 and "no section 'Nope'" in missing.json()["error"]
+    assert _client().get(url, params={"max_chars": 0}).status_code == 422
+
+
+def test_body_route_for_docs_criteria_and_unknowns(home: Path, seeded: str) -> None:
+    doc = store.create_entity(seeded, "doc", {"title": "Run report", "kind": "report",
+                                               "summary": "What the run measured.",
+                                               "body": "# Run\n\nmeasured things\n"})["ref"]
+    assert _client().get(f"/project/{seeded}/entry/{doc}/body").json()["text"].startswith("# Run")
+    assert _client().get(f"/project/{seeded}/entry/{doc}").json()["body_chars"] == len("# Run\n\nmeasured things\n")
+    criterion = _client().get(f"/project/{seeded}/entry/A1/body")
+    assert criterion.status_code == 400 and "has no body" in criterion.json()["error"]
+    assert _client().get(f"/project/{seeded}/entry/S999/body").status_code == 404
+    assert _client().get("/project/ghost/entry/S1/body").status_code == 404
+    # no body: empty text, not an error
+    assert _client().get(f"/project/{seeded}/entry/S2/body").json()["text"] == ""
+
+
+def test_body_route_is_read_only(home: Path, seeded: str) -> None:
+    store.update_entity(seeded, "S1", {"body": _PAGE_BODY})
+    before = _db().read_bytes()
+    _client().get(f"/project/{seeded}/entry/S1/body")
+    assert _db().read_bytes() == before
