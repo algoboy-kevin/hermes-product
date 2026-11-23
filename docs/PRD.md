@@ -84,3 +84,11 @@ The code repository keeps only code, a README and configuration.
 - Whether `feature_spec` is stored or always inferred through shared requirements (stored for now).
 - Kanban column-to-status mapping defaults ([S5]).
 - Where the git copy of the text export lives for a given project.
+
+Decisions carried over from hermes-feature-graph (superseded 2026-11-23; its tag v0.3.0 is kept, its store and parked cards are archived, the `gmd` graph was migrated by `migrate_fg.py`):
+
+- Rot prevention: no CI gate or hook in the plugin. `lint` (and `lint --coverage`) runs at the card-close step; a repository may call `hermes product lint` from pre-commit. An automated sync engine stays future work, only if manual links plus `lint` prove insufficient.
+- Multi-repo: one project per repository root. A cross-repository capability is a note on an entry naming the sibling project. Revisit when a second real project needs a reference.
+- Spec lock: not built. Agents read the store and seldom write it (FG-R1 test; the HP-11 pilot found the same for reading without a hint); lock guards, change logs and agent write tools are reopened only on a real incident of definition drift.
+- Where things live: an entry holds title, statement and notes (blockers, a design-note path); repository documents hold contracts, runbooks, evidence and unbuilt design notes, linked as DOC entries; kanban cards hold briefs, reports and reviews. Status never lives in documents.
+- Agent guidance: a registered skill, a conditional prompt section (only inside a project root) and the `Product: <slug>` line in the worker contract. Unhinted discovery was 2 of 4 runs, hinted 4 of 4 (HP-11 pilot).
