@@ -182,8 +182,8 @@ def test_no_verb_prints_help_and_returns_zero(capsys) -> None:
 
 
 def test_extra_args_are_accepted_and_ignored(capsys) -> None:
-    args = _build_parser().parse_args(["show", "R3", "extra", "words"])
+    args = _build_parser().parse_args(["link", "R3", "F1", "extra", "words"])
     rc = product_command(args)
     captured = capsys.readouterr()
     assert rc == 2
-    assert "NOT IMPLEMENTED: show (card HP-2)" in captured.err
+    assert "NOT IMPLEMENTED: link (card HP-3)" in captured.err

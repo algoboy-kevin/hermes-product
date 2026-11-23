@@ -23,6 +23,7 @@ can never cross projects.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -30,6 +31,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
+
+try:  # package submodule (Hermes plugin loader)
+    from . import model
+except ImportError:  # top-level module (test suite)
+    import model  # type: ignore[no-redef]
 
 DB_FILENAME = "product.db"
 
@@ -461,11 +467,13 @@ def get_active_project(con: Optional[sqlite3.Connection] = None) -> Optional[str
             con.close()
 
 
-def next_id(con: sqlite3.Connection, project: str, kind: str) -> int:
+def next_id(con: sqlite3.Connection, project: str, kind: str, *, commit: bool = True) -> int:
     """Atomically allocate the next id of ``kind`` for ``project``; starts at 1.
 
     The counter only ever grows: an id is NEVER reused, even if the row that
-    used it was deleted.
+    used it was deleted. ``commit=False`` leaves the allocation in the caller's
+    open transaction, so an entity is created (id + row) atomically — a failure
+    rolls both back and leaves no gap.
     """
     if kind not in ID_KINDS:
         raise StoreError(f"id kind {kind!r} not in {'/'.join(ID_KINDS)}")
@@ -477,7 +485,8 @@ def next_id(con: sqlite3.Connection, project: str, kind: str) -> int:
         " RETURNING next_id",
         (project, kind),
     ).fetchone()
-    con.commit()
+    if commit:
+        con.commit()
     return row[0] - 1
 
 
@@ -526,6 +535,485 @@ def resolve_project(slug: Optional[str] = None, con: Optional[sqlite3.Connection
             f"several projects ({listed}) - pass --project <slug> or run:"
             " hermes product project use <slug>"
         )
+    finally:
+        if own:
+            con.close()
+
+
+# ------------------------------------------------------------------- entities (HP-2)
+# History rows use these spellings (S1 section 9); the display prefixes live in model.
+ENTITY_TABLE = {
+    "requirement": "requirement",
+    "criterion": "criterion",
+    "feature": "feature",
+    "spec": "spec",
+    "doc": "doc",
+}
+
+#: list order when no kind is given (S4 section 1 examples: R, then F, then S, then A)
+LIST_ORDER = ("requirement", "feature", "spec", "criterion")
+
+
+def ref_for(kind: str, entity_id: int) -> str:
+    """``("requirement", 3)`` -> ``R3``."""
+    return model.format_ref(model.kind_for(kind), entity_id)
+
+
+def _select_row(con: sqlite3.Connection, project: str, kind: str,
+                entity_id: int) -> Optional[dict]:
+    row = con.execute(
+        f"SELECT * FROM {ENTITY_TABLE[kind]} WHERE project = ? AND id = ?",
+        (project, entity_id),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def resolve_entity(project: str, ref: str, *,
+                   con: Optional[sqlite3.Connection] = None) -> tuple[str, int]:
+    """``"R3"`` / ``"F:stripe"`` -> ``("requirement", 3)`` / ``("feature", 7)``.
+
+    Strict: the ref must name a row of THIS project (cross-project refs never resolve).
+    """
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        kind, identifier = model.parse_ref(ref)
+        if isinstance(identifier, str):                    # F:slug
+            row = con.execute(
+                "SELECT id FROM feature WHERE project = ? AND slug = ?",
+                (project, identifier),
+            ).fetchone()
+            if row is None:
+                raise StoreError(f"no feature with slug {identifier!r} in project {project!r}")
+            return "feature", row["id"]
+        if _select_row(con, project, kind, identifier) is None:
+            raise StoreError(
+                f"{model.format_ref(kind, identifier)} does not exist in project {project!r}"
+            )
+        return kind, identifier
+    finally:
+        if own:
+            con.close()
+
+
+def _resolve_link(con: sqlite3.Connection, project: str, target_kind: str,
+                  value: Any, field_name: str) -> int:
+    """Turn a ref/name/id into an id of ``target_kind`` that exists in ``project``."""
+    if value is None or value == "":
+        raise model.ValidationError(f"{field_name} is required")
+    if isinstance(value, bool):
+        raise model.ValidationError(f"{field_name} must be a reference, got {value!r}")
+    if isinstance(value, int):
+        identifier: Any = value
+    else:
+        kind, identifier = model.parse_ref(value)          # ValidationError on bad shape
+        if kind != target_kind or isinstance(identifier, str):
+            raise model.ValidationError(
+                f"{field_name} must be a {target_kind} reference like "
+                f"{model.format_ref(target_kind, 3)}, got {value!r}"
+            )
+    exists = con.execute(
+        f"SELECT 1 FROM {ENTITY_TABLE[target_kind]} WHERE project = ? AND id = ?",
+        (project, identifier),
+    ).fetchone()
+    if exists is None:
+        raise model.ValidationError(
+            f"{field_name} {model.format_ref(target_kind, identifier)} does not exist"
+            f" in project {project!r}"
+        )
+    return identifier
+
+
+def _check_feature_slug(con: sqlite3.Connection, project: str, slug: str,
+                        *, exclude_id: Optional[int] = None) -> None:
+    row = con.execute(
+        "SELECT id FROM feature WHERE project = ? AND slug = ?", (project, slug)
+    ).fetchone()
+    if row is not None and row["id"] != exclude_id:
+        raise model.ValidationError(f"slug {slug!r} already exists in project {project!r}")
+
+
+def _insert_row(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
+                values: dict) -> None:
+    """The one INSERT of a new entity row (a seam the tests can force to fail)."""
+    columns = ["project", "id", *values]
+    placeholders = ", ".join("?" for _ in columns)
+    con.execute(
+        f"INSERT INTO {ENTITY_TABLE[kind]}({', '.join(columns)}) VALUES ({placeholders})",
+        (project, entity_id, *values.values()),
+    )
+
+
+def create_entity(project: str, kind: str, fields: dict,
+                  con: Optional[sqlite3.Connection] = None) -> dict:
+    """Create an R#/A#/F#/S# row: validate, then allocate the id and insert atomically.
+
+    Validation and cross-reference checks run BEFORE the id is allocated, so a
+    refused payload consumes no id; the allocation and the row sit in ONE
+    transaction, so a failure after the allocation leaves no gap and no row.
+    """
+    kind = model.kind_for(kind)
+    if kind == "doc":
+        raise StoreError("NOT IMPLEMENTED: add DOC (card HP-4)")
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        values = dict(fields)
+        if kind == "criterion":
+            values["requirement_id"] = _resolve_link(
+                con, project, "requirement", values.get("requirement_id"), "requirement_id"
+            )
+        if kind == "feature" and values.get("slug"):
+            _check_feature_slug(con, project, str(values["slug"]))
+        values = model.validate_new(kind, values)
+        if isinstance(values.get("paths"), (list, tuple)):
+            values["paths"] = json.dumps(list(values["paths"]))
+        values["updated_at"] = _now()
+        with con:                                  # id + row: one transaction
+            new_id = next_id(con, project, model.PREFIX[kind], commit=False)
+            _insert_row(con, project, kind, new_id, values)
+    finally:
+        if own:
+            con.close()
+    return {"kind": kind, "id": new_id, "ref": model.format_ref(kind, new_id)}
+
+
+# ---------------------------------------------------------------- reading entities
+def _id_column(con: sqlite3.Connection, sql: str, params: tuple) -> list[int]:
+    return [row[0] for row in con.execute(sql, params)]
+
+
+def links_of(con: sqlite3.Connection, project: str, kind: str, entity_id: int) -> dict:
+    """The link tables as id lists (HP-3 fills them; here they are read only).
+
+    Requirement: features, specs, criteria, criteria_total, criteria_passed.
+    Feature: needs, requirements, specs. Spec: requirements, features.
+    """
+    if kind == "requirement":
+        criteria = con.execute(
+            "SELECT status FROM criterion WHERE project = ? AND requirement_id = ?",
+            (project, entity_id),
+        ).fetchall()
+        return {
+            "features": _id_column(
+                con,
+                "SELECT feature_id FROM feature_requirement"
+                " WHERE project = ? AND requirement_id = ? ORDER BY feature_id",
+                (project, entity_id),
+            ),
+            "specs": _id_column(
+                con,
+                "SELECT spec_id FROM spec_requirement"
+                " WHERE project = ? AND requirement_id = ? ORDER BY spec_id",
+                (project, entity_id),
+            ),
+            "criteria": _id_column(
+                con,
+                "SELECT id FROM criterion WHERE project = ? AND requirement_id = ? ORDER BY id",
+                (project, entity_id),
+            ),
+            "criteria_total": len(criteria),
+            "criteria_passed": sum(1 for row in criteria
+                                   if row["status"] in ("passed", "waived")),
+        }
+    if kind == "feature":
+        return {
+            "needs": _id_column(
+                con,
+                "SELECT needs_id FROM feature_dependency"
+                " WHERE project = ? AND feature_id = ? ORDER BY needs_id",
+                (project, entity_id),
+            ),
+            "requirements": _id_column(
+                con,
+                "SELECT requirement_id FROM feature_requirement"
+                " WHERE project = ? AND feature_id = ? ORDER BY requirement_id",
+                (project, entity_id),
+            ),
+            "specs": _id_column(
+                con,
+                "SELECT spec_id FROM feature_spec"
+                " WHERE project = ? AND feature_id = ? ORDER BY spec_id",
+                (project, entity_id),
+            ),
+        }
+    if kind == "spec":
+        return {
+            "requirements": _id_column(
+                con,
+                "SELECT requirement_id FROM spec_requirement"
+                " WHERE project = ? AND spec_id = ? ORDER BY requirement_id",
+                (project, entity_id),
+            ),
+            "features": _id_column(
+                con,
+                "SELECT feature_id FROM feature_spec"
+                " WHERE project = ? AND spec_id = ? ORDER BY feature_id",
+                (project, entity_id),
+            ),
+        }
+    return {}
+
+
+def history_of(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
+               *, limit: int = 10) -> list[dict]:
+    """The last ``limit`` history rows, newest first."""
+    rows = con.execute(
+        "SELECT at, change, reason FROM history"
+        " WHERE project = ? AND entity_type = ? AND entity_id = ?"
+        " ORDER BY id DESC LIMIT ?",
+        (project, kind, entity_id, limit),
+    ).fetchall()
+    return [{"at": row["at"], "change": row["change"], "reason": row["reason"]} for row in rows]
+
+
+def _children_of(con: sqlite3.Connection, project: str, kind: str,
+                 entity_id: int) -> list[dict]:
+    """Child records: a requirement's criteria (A#), in id order. Nothing else yet."""
+    if kind != "requirement":
+        return []
+    rows = con.execute(
+        "SELECT * FROM criterion WHERE project = ? AND requirement_id = ? ORDER BY id",
+        (project, entity_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_entity(project: str, ref: str, *,
+               con: Optional[sqlite3.Connection] = None) -> dict:
+    """One entry: raw row, link ids, child records and its last 10 history rows."""
+    own = con is None
+    con = con or connect()
+    try:
+        kind, entity_id = resolve_entity(project, ref, con=con)
+        row = _select_row(con, project, kind, entity_id)
+        assert row is not None                     # resolve_entity checked it
+        return {
+            "kind": kind,
+            "id": entity_id,
+            "ref": model.format_ref(kind, entity_id),
+            "row": row,
+            "links": links_of(con, project, kind, entity_id),
+            "children": _children_of(con, project, kind, entity_id),
+            "history": history_of(con, project, kind, entity_id),
+        }
+    finally:
+        if own:
+            con.close()
+
+
+def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[str] = None,
+                  limit: Optional[int] = None,
+                  con: Optional[sqlite3.Connection] = None) -> list[dict]:
+    """Rows of one kind (or R, F, S, A), id order, each with ``kind``/``ref``/``links``."""
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        kinds = [model.kind_for(kind)] if kind else list(LIST_ORDER)
+        found: list[dict] = []
+        for one in kinds:
+            sql = f"SELECT * FROM {ENTITY_TABLE[one]} WHERE project = ?"
+            params: list[Any] = [project]
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(status)
+            sql += " ORDER BY id"
+            for row in con.execute(sql, tuple(params)):
+                item = dict(row)
+                item["kind"] = one
+                item["ref"] = model.format_ref(one, item["id"])
+                item["links"] = links_of(con, project, one, item["id"])
+                found.append(item)
+        if limit is not None:
+            found = found[: max(int(limit), 0)]
+        return found
+    finally:
+        if own:
+            con.close()
+
+
+# --------------------------------------------------------------- changes (set, HP-2)
+def _superseded_ok(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
+                   fields: dict) -> bool:
+    """``superseded_by`` names an existing row of the same kind, in the same project."""
+    target = fields.get("superseded_by")
+    if target is None or target == entity_id:
+        return False
+    return _select_row(con, project, kind, int(target)) is not None
+
+
+def load_facts(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
+               fields: dict) -> dict:
+    """The counts and statuses the status rules need, read from the link tables.
+
+    This is the only place that touches sqlite for the status machines: ``model``
+    receives the result as a plain dict.
+    """
+    if kind == "requirement":
+        criteria = con.execute(
+            "SELECT COUNT(*) AS total,"
+            " COALESCE(SUM(CASE WHEN status NOT IN ('passed','waived') THEN 1 ELSE 0 END), 0)"
+            "   AS still_open"
+            " FROM criterion WHERE project = ? AND requirement_id = ?",
+            (project, entity_id),
+        ).fetchone()
+        return {
+            "features": con.execute(
+                "SELECT COUNT(*) AS n FROM feature_requirement"
+                " WHERE project = ? AND requirement_id = ?", (project, entity_id),
+            ).fetchone()["n"],
+            "specs": con.execute(
+                "SELECT COUNT(*) AS n FROM spec_requirement"
+                " WHERE project = ? AND requirement_id = ?", (project, entity_id),
+            ).fetchone()["n"],
+            "criteria": criteria["total"],
+            "criteria_open": criteria["still_open"],
+            "superseded_by_ok": _superseded_ok(con, project, "requirement", entity_id, fields),
+        }
+    if kind == "feature":
+        requirements = con.execute(
+            "SELECT COUNT(*) AS total,"
+            " COALESCE(SUM(CASE WHEN r.status NOT IN ('done','dropped') THEN 1 ELSE 0 END), 0)"
+            "   AS still_open"
+            " FROM feature_requirement fr"
+            " JOIN requirement r ON r.project = fr.project AND r.id = fr.requirement_id"
+            " WHERE fr.project = ? AND fr.feature_id = ?",
+            (project, entity_id),
+        ).fetchone()
+        only_here = con.execute(
+            "SELECT COUNT(*) AS n"
+            " FROM feature_requirement fr"
+            " JOIN requirement r ON r.project = fr.project AND r.id = fr.requirement_id"
+            " WHERE fr.project = ? AND fr.feature_id = ?"
+            "   AND r.status NOT IN ('done','dropped')"
+            "   AND (SELECT COUNT(*) FROM feature_requirement fr2"
+            "        JOIN feature f2 ON f2.project = fr2.project AND f2.id = fr2.feature_id"
+            "        WHERE fr2.project = fr.project"
+            "          AND fr2.requirement_id = fr.requirement_id"
+            "          AND f2.status != 'cut') = 1",
+            (project, entity_id),
+        ).fetchone()
+        return {
+            "requirements": requirements["total"],
+            "requirements_not_done": requirements["still_open"],
+            "open_only_here": only_here["n"],
+        }
+    if kind == "spec":
+        criteria = con.execute(
+            "SELECT COUNT(*) AS total,"
+            " COALESCE(SUM(CASE WHEN c.status NOT IN ('passed','waived') THEN 1 ELSE 0 END), 0)"
+            "   AS still_open"
+            " FROM criterion c"
+            " JOIN spec_requirement sr ON sr.project = c.project"
+            "   AND sr.requirement_id = c.requirement_id"
+            " WHERE sr.project = ? AND sr.spec_id = ?",
+            (project, entity_id),
+        ).fetchone()
+        return {
+            "requirements": con.execute(
+                "SELECT COUNT(*) AS n FROM spec_requirement"
+                " WHERE project = ? AND spec_id = ?", (project, entity_id),
+            ).fetchone()["n"],
+            "external_links": con.execute(
+                "SELECT COUNT(*) AS n FROM external_link"
+                " WHERE project = ? AND entity_type = 'spec' AND entity_id = ?",
+                (project, entity_id),
+            ).fetchone()["n"],
+            "criteria": criteria["total"],
+            "criteria_open": criteria["still_open"],
+            "superseded_by_ok": _superseded_ok(con, project, "spec", entity_id, fields),
+        }
+    return {}
+
+
+def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str] = None,
+                  con: Optional[sqlite3.Connection] = None) -> dict:
+    """Change fields and/or the status of one entry, validated in one transaction.
+
+    Every mutation stamps ``updated_at``; a status change and a requirement
+    statement change each append a history row (S1 section 9). A statement change
+    on an approved-or-later requirement requires ``reason``.
+    """
+    own = con is None
+    con = con or connect()
+    try:
+        kind, entity_id = resolve_entity(project, ref, con=con)
+        row = _select_row(con, project, kind, entity_id)
+        assert row is not None
+        allowed = model.SET_FIELDS[kind]
+        for name in changes:
+            if name not in allowed:
+                raise model.ValidationError(
+                    f"unknown field {name!r} for {model.format_ref(kind, entity_id)};"
+                    f" editable keys are {', '.join(allowed)}"
+                )
+        values: dict[str, Any] = {}
+        for name, raw in changes.items():
+            values[name] = model.validate_field(kind, name, raw)
+        if isinstance(values.get("paths"), (list, tuple)):
+            values["paths"] = json.dumps(list(values["paths"]))
+        if values.get("superseded_by") is not None:
+            if values["superseded_by"] == entity_id:
+                raise model.ValidationError(
+                    f"superseded_by cannot be {model.format_ref(kind, entity_id)} itself"
+                )
+            _resolve_link(con, project, kind, values["superseded_by"], "superseded_by")
+        if kind == "feature" and "slug" in values:
+            _check_feature_slug(con, project, values["slug"], exclude_id=entity_id)
+
+        merged = {**row, **values}
+        model.check_blocked(merged)
+
+        status_change: Optional[tuple[str, str]] = None
+        if "status" in values:
+            facts = load_facts(con, project, kind, entity_id, merged)
+            model.check_transition(kind, row, values["status"], merged, facts)
+            status_change = (row["status"], values["status"])
+
+        statement_changed = (kind == "requirement" and "statement" in values
+                             and values["statement"] != row["statement"])
+        clean_reason = (str(reason).strip() or None) if reason is not None else None
+        if (statement_changed and row["status"] in model.APPROVED_OR_LATER
+                and clean_reason is None):
+            raise model.ValidationError(
+                f"changing the statement of {model.format_ref(kind, entity_id)}"
+                f" ({row['status']}) needs --reason <why>"
+            )
+
+        now = _now()
+        values["updated_at"] = now
+        events: list[tuple[str, Optional[str]]] = []
+        if status_change is not None:
+            events.append((f"status {status_change[0]} -> {status_change[1]}", clean_reason))
+        if statement_changed:
+            events.append(("statement changed", clean_reason))
+
+        with con:
+            assignments = ", ".join(f"{name} = ?" for name in values)
+            con.execute(
+                f"UPDATE {ENTITY_TABLE[kind]} SET {assignments} WHERE project = ? AND id = ?",
+                (*values.values(), project, entity_id),
+            )
+            for change, why in events:
+                con.execute(
+                    "INSERT INTO history(project, entity_type, entity_id, change, reason, at)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (project, kind, entity_id, change, why, now),
+                )
+        return {
+            "kind": kind,
+            "id": entity_id,
+            "ref": model.format_ref(kind, entity_id),
+            "changed": list(changes),
+            "status_change": status_change,
+            "row": _select_row(con, project, kind, entity_id),
+        }
     finally:
         if own:
             con.close()

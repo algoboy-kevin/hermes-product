@@ -1,23 +1,27 @@
-"""The ``hermes product`` CLI (scaffold, card HP-0).
+"""The ``hermes product`` CLI.
 
-``register_cli(subparser)`` builds the argparse tree with every verb of
-docs/specs/S4-tool-behavior.md section 2; ``product_command(args)`` makes every
-verb a loud stub: one stderr line ``NOT IMPLEMENTED: <verb path> (card HP-<n>)``
-and exit code 2. With no verb it prints help and returns 0.
+Card HP-0 built the argparse tree with every verb of docs/specs/S4-tool-behavior.md
+section 2 and made each one a loud stub. Card HP-1 implemented ``project add/list/use``.
+Card HP-2 implements ``add``, ``show`` and ``list`` (STEP 1) and ``set`` (STEP 2):
+entries are validated, every failure prints its message to stderr and returns 1.
 
-Every verb swallows trailing arguments (``argparse.REMAINDER``) so a later card
-can add real options without breaking the scaffold tests; no option names are
-invented here. The verb -> implementing-card map lives in ``VERB_CARDS`` alone.
+Every remaining verb stays a loud stub: one stderr line
+``NOT IMPLEMENTED: <verb path> (card HP-<n>)`` and exit code 2. The verb ->
+implementing-card map lives in ``VERB_CARDS`` alone.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
+from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import store
+    from . import model, store
 except ImportError:  # top-level module (test suite)
+    import model  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
 
 EXIT_OK = 0
@@ -47,13 +51,22 @@ VERB_CARDS: dict[str, str] = {
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
-# Verbs this build actually implements (card HP-1: the project verbs).
-IMPLEMENTED = {"project add", "project list", "project use"}
+# Verbs this build actually implements (HP-1: the project verbs; HP-2: entities).
+IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list"}
+
+SEP = "  "
 
 
 def _add_tail(parser: argparse.ArgumentParser) -> None:
     """Accept and ignore anything after the verb (later cards add real options)."""
     parser.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+
+
+def _add_project_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--project", default=None, metavar="SLUG",
+        help="Project slug (default: the project whose root contains the working directory)",
+    )
 
 
 def register_cli(subparser: argparse.ArgumentParser) -> None:
@@ -76,18 +89,55 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_pu = psubs.add_parser("use", help="Pick a project")
     p_pu.add_argument("slug", help="Project slug")
 
+    # ---- add <R|A|F|S|DOC> ...: one parser, the flags of every kind, checked per kind.
     p_add = subs.add_parser("add", help="Create an R#, A#, F#, S# or DOC#")
-    _add_tail(p_add)
+    p_add.add_argument("kind", metavar="{R,A,F,S,DOC}", help="Entity type to create")
+    _add_project_option(p_add)
+    p_add.add_argument("--title", default=None, help="Title (3-80 characters)")
+    p_add.add_argument("--statement", default=None, help="One testable sentence (R#)")
+    p_add.add_argument("--priority", default=None, help="must|should|could (R#)")
+    p_add.add_argument("--rationale", default=None, help="Why it exists (R#, required at approved)")
+    p_add.add_argument("--phase", default=None, help="Target release (R#, F#)")
+    p_add.add_argument("--notes", default=None, help="Short note")
+    p_add.add_argument("--hypothesis-ref", dest="hypothesis_ref", default=None,
+                       help="The claim this requirement tests (R#)")
+    p_add.add_argument("--legacy", action="store_true", default=None,
+                       help="Imported from an existing system (R#)")
+    p_add.add_argument("--prd-ref", dest="prd_ref", default=None, help="PRD anchor (R#)")
+    p_add.add_argument("--req", default=None, help="Parent requirement, e.g. R3 (A#)")
+    p_add.add_argument("--text", default=None, help="The one check, Given/When/Then (A#)")
+    p_add.add_argument("--layer", default=None, help="foundation|core|growth (F#)")
+    p_add.add_argument("--slug", default=None, help="Unique short key (F#)")
+    p_add.add_argument("--description", default=None, help="What it is and its boundary (F#)")
+    p_add.add_argument("--infra", action="store_true", default=None,
+                       help="Plumbing with no requirement of its own (F#)")
+    p_add.add_argument("--paths", default=None, help="Code paths, comma separated (F#, S#)")
+    p_add.add_argument("--summary", default=None, help="What the spec decides (S#)")
+
     p_set = subs.add_parser("set", help="Change a field or status (validated)")
-    _add_tail(p_set)
+    p_set.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
+    p_set.add_argument("pairs", nargs="+", metavar="key=value",
+                       help="field=value pairs (quote values that contain spaces)")
+    p_set.add_argument("--reason", default=None,
+                       help="Why the change happened; required for a statement change"
+                            " once the requirement is approved")
+    _add_project_option(p_set)
     p_link = subs.add_parser("link", help="Create a relation, or add a dependency edge")
     _add_tail(p_link)
     p_unlink = subs.add_parser("unlink", help="Remove a relation, or remove a dependency edge")
     _add_tail(p_unlink)
+
     p_show = subs.add_parser("show", help="Full detail for one entry")
-    _add_tail(p_show)
+    p_show.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
+    _add_project_option(p_show)
+
     p_list = subs.add_parser("list", help="One line per item by default")
-    _add_tail(p_list)
+    p_list.add_argument("kind", nargs="?", default=None, metavar="{R,A,F,S}",
+                        help="Only this kind (default: R, then F, then S, then A)")
+    p_list.add_argument("--status", default=None, help="Only entries in this state")
+    p_list.add_argument("--limit", type=int, default=None, help="At most N lines")
+    _add_project_option(p_list)
+
     p_trace = subs.add_parser(
         "trace",
         help="For one entry, everything connected: requirement -> features, specs, "
@@ -142,6 +192,129 @@ def _verb_path(args: argparse.Namespace) -> str | None:
     return action
 
 
+# --------------------------------------------------------------------- compact output
+_NEWLINES = re.compile(r"[\r\n\t]")
+
+
+def _flat(value: Any) -> str:
+    """One line, always: any newline or tab inside a text becomes a single space."""
+    return _NEWLINES.sub(" ", str(value))
+
+
+def _column(value: Any) -> str:
+    """A column value, ``-`` when absent."""
+    return "-" if value is None or value == "" else _flat(value)
+
+
+def _ids(values: list) -> str:
+    return ",".join(str(value) for value in values) or "-"
+
+
+def _clip(text: Any, width: int = 80) -> str:
+    flat = _flat(text or "")
+    return flat if len(flat) <= width else flat[: width - 1] + "\u2026"
+
+
+def _line_requirement(item: dict) -> str:
+    links = item["links"]
+    return SEP.join([
+        item["ref"], _column(item["status"]), _column(item["priority"]),
+        _column(item["phase"]), _flat(item["title"] or ""),
+        f"F:{_ids(links['features'])}",
+        f"S:{_ids(links['specs'])}",
+        f"A:{links['criteria_passed']}/{links['criteria_total']}",
+    ])
+
+
+def _line_criterion(item: dict) -> str:
+    level = item.get("evidence_level")
+    return SEP.join([
+        item["ref"], _column(item["status"]),
+        model.format_ref("requirement", item["requirement_id"]),
+        _column(None if level in (None, "none") else level),
+        _clip(item.get("text")),
+    ])
+
+
+def _line_feature(item: dict) -> str:
+    links = item["links"]
+    return SEP.join([
+        item["ref"], _column(item["status"]), _column(item["layer"]),
+        _column(item["phase"]), _flat(item["title"] or ""),
+        f"needs F:{_ids(links['needs'])}",
+        f"R:{_ids(links['requirements'])}",
+        f"S:{_ids(links['specs'])}",
+    ])
+
+
+def _line_spec(item: dict) -> str:
+    links = item["links"]
+    return SEP.join([
+        item["ref"], _column(item["status"]), _flat(item["title"] or ""),
+        f"R:{_ids(links['requirements'])}",
+        f"F:{_ids(links['features'])}",
+    ])
+
+
+LINE_BUILDERS = {
+    "requirement": _line_requirement,
+    "criterion": _line_criterion,
+    "feature": _line_feature,
+    "spec": _line_spec,
+}
+
+
+# ------------------------------------------------------------------- detail (show)
+# S1 field order per kind.
+SHOW_ORDER: dict[str, tuple[str, ...]] = {
+    "requirement": ("id", "title", "statement", "rationale", "priority", "phase", "status",
+                    "status_reason", "superseded_by", "blocked", "blocked_reason",
+                    "hypothesis_ref", "legacy", "prd_ref", "notes", "updated_at"),
+    "criterion": ("id", "requirement_id", "text", "status", "evidence", "evidence_level",
+                  "notes", "updated_at"),
+    "feature": ("id", "slug", "title", "layer", "status", "status_reason", "phase",
+                "description", "infra", "paths", "blocked", "blocked_reason", "notes",
+                "updated_at"),
+    "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
+             "blocked", "blocked_reason", "notes", "updated_at"),
+    "doc": ("id", "title", "summary", "status", "notes", "updated_at"),
+}
+
+_FLAG_FIELDS = {"blocked", "legacy", "infra"}
+
+
+def _show_value(kind: str, field: str, value: Any) -> str:
+    if field == "id":
+        return model.format_ref(kind, value)
+    if field == "requirement_id":
+        return model.format_ref("requirement", value)
+    if field == "superseded_by":
+        return model.format_ref(kind if kind in ("requirement", "spec") else "requirement", value)
+    if field == "paths":
+        try:
+            items = json.loads(value)
+        except (TypeError, ValueError):
+            items = [str(value)]
+        return ", ".join(str(item) for item in items)
+    return _flat(value)
+
+
+def _show_line(kind: str, field: str, value: Any) -> Optional[str]:
+    """One ``key: value`` line, or None for an empty field."""
+    if field in _FLAG_FIELDS:
+        return f"{field}: 1" if value else None
+    if field == "evidence_level" and value in (None, "none"):
+        return None
+    if value is None or value == "":
+        return None
+    return f"{field}: {_show_value(kind, field, value)}"
+
+
+# ----------------------------------------------------------------------- handlers
+def _project(args: argparse.Namespace) -> str:
+    return store.resolve_project(getattr(args, "project", None))
+
+
 def _project_add(args: argparse.Namespace) -> int:
     """`project add <slug> <name> [--root PATH]` -> `project <slug> created`."""
     created = store.create_project(args.slug, args.name, root=args.root)
@@ -165,10 +338,123 @@ def _project_use(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+#: `add` flag -> stored field. The per-kind allowed list is model.ADD_FIELDS.
+_ADD_FLAG_FIELDS = {
+    "title": "title",
+    "statement": "statement",
+    "priority": "priority",
+    "rationale": "rationale",
+    "phase": "phase",
+    "notes": "notes",
+    "hypothesis_ref": "hypothesis_ref",
+    "legacy": "legacy",
+    "prd_ref": "prd_ref",
+    "req": "requirement_id",
+    "text": "text",
+    "layer": "layer",
+    "slug": "slug",
+    "description": "description",
+    "infra": "infra",
+    "paths": "paths",
+    "summary": "summary",
+}
+
+
+def _cmd_add(args: argparse.Namespace) -> int:
+    """`add <KIND> ...` -> `<REF> created`; DOC is card HP-4."""
+    if str(args.kind).upper() == "DOC":
+        print("NOT IMPLEMENTED: add DOC (card HP-4)", file=sys.stderr)
+        return EXIT_NOT_IMPLEMENTED
+    project = _project(args)
+    kind = model.kind_for(args.kind)
+    fields: dict[str, Any] = {}
+    for flag, field in _ADD_FLAG_FIELDS.items():
+        value = getattr(args, flag, None)
+        if value is None:
+            continue
+        if field not in model.ADD_FIELDS[kind]:
+            raise model.ValidationError(
+                f"--{flag.replace('_', '-')} is not a field of add {model.PREFIX[kind]}"
+            )
+        fields[field] = value
+    created = store.create_entity(project, kind, fields)
+    print(f"{created['ref']} created")
+    return EXIT_OK
+
+
+def _render_item(item: dict) -> str:
+    return LINE_BUILDERS[item["kind"]](item)
+
+
+def _cmd_list(args: argparse.Namespace) -> int:
+    """`list [R|A|F|S] [--status S] [--limit N]` -> one compact line per item."""
+    if args.kind is not None and args.kind not in ("R", "A", "F", "S"):
+        raise model.ValidationError(
+            f"list accepts R, A, F or S, got {args.kind!r}"
+        )
+    project = _project(args)
+    items = store.list_entities(project, args.kind, status=args.status, limit=args.limit)
+    for item in items:
+        print(_render_item(item))
+    return EXIT_OK
+
+
+def _cmd_set(args: argparse.Namespace) -> int:
+    """`set <REF> key=value ...` -> `R3 approved -> in_progress`, else `R3 updated: a, b`."""
+    project = _project(args)
+    changes: dict[str, str] = {}
+    for pair in args.pairs:
+        if "=" not in pair:
+            raise model.ValidationError(
+                f"expected key=value, got {pair!r} (the value may be quoted by the shell)"
+            )
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise model.ValidationError(f"expected key=value, got {pair!r}: empty key")
+        changes[key] = value
+    result = store.update_entity(project, args.ref, changes, reason=args.reason)
+    ref = result["ref"]
+    if result["status_change"] is not None:
+        old, new = result["status_change"]
+        print(f"{ref} {old} -> {new}")
+    else:
+        print(f"{ref} updated: {', '.join(result['changed'])}")
+    return EXIT_OK
+
+
+def _cmd_show(args: argparse.Namespace) -> int:
+    """`show <REF>` -> S1 fields, then child A-lines, then `history:`."""
+    project = _project(args)
+    entry = store.get_entity(project, args.ref)
+    kind, row = entry["kind"], entry["row"]
+    for field in SHOW_ORDER[kind]:
+        line = _show_line(kind, field, row.get(field))
+        if line is not None:
+            print(line)
+    for child in entry["children"]:
+        item = dict(child)
+        item["kind"] = "criterion"
+        item["ref"] = model.format_ref("criterion", child["id"])
+        item["links"] = {}
+        print(_line_criterion(item))
+    print("history:")
+    for event in entry["history"]:
+        line = f"{event['at']}{SEP}{event['change']}"
+        if event["reason"]:
+            line += f"{SEP}[{event['reason']}]"
+        print(line)
+    return EXIT_OK
+
+
 _IMPLEMENTED_HANDLERS = {
     "project add": _project_add,
     "project list": _project_list,
     "project use": _project_use,
+    "add": _cmd_add,
+    "set": _cmd_set,
+    "list": _cmd_list,
+    "show": _cmd_show,
 }
 
 
@@ -186,7 +472,7 @@ def product_command(args: argparse.Namespace) -> int:
     if handler is not None:
         try:
             return handler(args)
-        except store.StoreError as exc:
+        except (store.StoreError, model.ValidationError) as exc:
             print(exc, file=sys.stderr)
             return EXIT_ERROR
     card = VERB_CARDS.get(path)
