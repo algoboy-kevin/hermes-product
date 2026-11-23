@@ -66,3 +66,4 @@ A1 to A33, all `not_run`; each belongs to exactly one requirement (see the Req c
 |---|---|---|---|
 | DOC1 | research | current | [Lessons from an earlier feature-graph prototype](supporting/DOC1-lessons-from-feature-graph.md) |
 | DOC2 | design | current | [Desktop page layout](supporting/DOC2-ui-layout.md) |
+| DOC4 | research | current | [Agent test results (HP-11 pilot)](supporting/DOC4-agent-test-results.md) |

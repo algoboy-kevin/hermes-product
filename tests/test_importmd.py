@@ -754,3 +754,34 @@ def test_stored_prd_id_claimed_by_a_supporting_file_is_a_problem(
     rc, out, err = run_import(capsys, tmp_path / "docs")
     assert rc == 1
     assert "stored PRD" in out + err
+
+
+def test_reimport_does_not_conflict_on_updated_at_alone(tmp_path: Path, shop: str, capsys) -> None:
+    tree = docs_tree(tmp_path)
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 0, err
+    connection = store.connect()
+    try:                                  # what any `set` does to a row the markdown has no timestamp for
+        connection.execute("UPDATE requirement SET updated_at = '2026-11-23T10:00:00+00:00' WHERE project = 'shop'")
+        connection.execute("UPDATE doc SET updated_at = '2026-11-23T10:00:00+00:00' WHERE project = 'shop'")
+        connection.commit()
+    finally:
+        connection.close()
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 0, out + err
+    assert "0 conflicts" in out
+
+
+def test_a_real_field_difference_is_still_a_conflict(tmp_path: Path, shop: str, capsys) -> None:
+    tree = docs_tree(tmp_path)
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 0, err
+    connection = store.connect()
+    try:
+        connection.execute("UPDATE requirement SET title = 'Edited in the store' WHERE project = 'shop' AND id = 1")
+        connection.commit()
+    finally:
+        connection.close()
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 3
+    assert "conflict R1: title differs" in out

@@ -566,6 +566,11 @@ def _check_ends(data: dict, present: dict) -> None:
 
 def _first_difference(kind: str, stored: dict, incoming: dict) -> Optional[str]:
     for field in EXPORT_COLUMNS[kind]:
+        # An incoming row with NO updated_at (import-md rows come from markdown, which
+        # carries no timestamps) says nothing about it: a store that was edited since
+        # (set stamps updated_at) must not conflict on that alone.
+        if field == "updated_at" and incoming.get(field) is None:
+            continue
         if stored.get(field) != incoming.get(field):
             return field
     return None
