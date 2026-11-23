@@ -17,9 +17,9 @@ help:
 	@echo "make disable   disable it again"
 
 test:
-	@if python3 -c "import pytest, ruamel.yaml" 2>/dev/null; then python3 -m pytest tests -q; \
+	@if python3 -c "import pytest, ruamel.yaml, fastapi, httpx" 2>/dev/null; then python3 -m pytest tests -q; \
 	else env -u VIRTUAL_ENV -u PYTHONPATH uv run --no-project --with pytest \
-		--with "ruamel.yaml>=0.18,<0.19" \
+		--with "ruamel.yaml>=0.18,<0.19" --with fastapi --with httpx \
 		--python 3.12 python -m pytest tests -q; fi
 
 doctor:

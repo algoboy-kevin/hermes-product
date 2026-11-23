@@ -1,0 +1,11 @@
+{
+  "name": "product",
+  "label": "Product",
+  "description": "Read-only data routes for the product plugin: a project's requirements, acceptance criteria, features, specs and documents, with the PRD as markdown, workflow states, cards by state, entry detail and the feature graph. The interface lives in the desktop page (a later card); this backend only serves data, and the single write is New project.",
+  "icon": "Package",
+  "version": "0.1.0",
+  "tab": {
+    "hidden": true
+  },
+  "api": "plugin_api.py"
+}
