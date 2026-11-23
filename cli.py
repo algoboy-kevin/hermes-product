@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
+    from . import adopt
     from . import (code_coverage, docs_text, dryrun, export, external, fold, graph, importmd,
                    lint, model, plan, scan, store, verify)
 except ImportError:  # top-level module (test suite)
+    import adopt  # type: ignore[no-redef]
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
     import dryrun  # type: ignore[no-redef]
@@ -51,6 +53,7 @@ VERB_CARDS: dict[str, str] = {
     "project use": "HP-1",
     "project set": "HP-17",
     "verify": "HP-18",
+    "adopt": "HP-19",
     "add": "HP-2",
     "set": "HP-2",
     "show": "HP-2",
@@ -78,7 +81,7 @@ _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 # HP-16: fold-docs).
 IMPLEMENTED = {"project add", "project list", "project use", "project set", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
-               "lint", "scan-prd", "import-md", "sync", "fold-docs", "verify"}
+               "lint", "scan-prd", "import-md", "sync", "fold-docs", "verify", "adopt"}
 
 SEP = "  "
 
@@ -278,6 +281,20 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                           help="Create the project under this slug instead of the"
                                " one in project.yaml")
     _add_write_options(p_import)
+
+    p_adopt = subs.add_parser(
+        "adopt",
+        help="Bring a repository's Markdown into the project: a spec file becomes an S# with"
+             " its text as the body, other files become DOCs; a plan unless --apply",
+    )
+    p_adopt.add_argument("dir", metavar="DIR", help="The repository (or docs) directory to scan")
+    p_adopt.add_argument("--apply", action="store_true", default=False,
+                         help="Write the proposed rows (each file is its own transaction)")
+    p_adopt.add_argument("--update", action="store_true", default=False,
+                         help="With --apply: also refresh the body of rows whose file changed")
+    p_adopt.add_argument("--json", dest="adopt_json", action="store_true", default=False,
+                         help="Print one JSON object (counts and one entry per file)")
+    _add_project_option(p_adopt)
 
     p_verify = subs.add_parser(
         "verify",
@@ -849,6 +866,27 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
 
 
+def _cmd_adopt(args: argparse.Namespace) -> int:
+    """`adopt DIR [--apply] [--update]` -> a diff-like plan, or the applied counts (HP-19)."""
+    project = _project(args)
+    found = adopt.plan(project, args.dir)
+    counts = adopt.apply(project, found, update=args.update) if args.apply else None
+    if args.update and not args.apply:
+        raise model.ValidationError("--update needs --apply")
+    code = EXIT_ERROR if counts and counts["failed"] else EXIT_OK
+    if args.adopt_json:
+        rows = [{key: row.get(key) for key in ("path", "target", "doc_kind", "action", "ref",
+                                               "applied", "title", "summary", "thin", "chars",
+                                               "error")} for row in found["rows"]]
+        print(json.dumps({"ok": code == 0, "project": project, "root": found["root"],
+                          "applied": bool(args.apply), "counts": counts, "rows": rows,
+                          "skipped": found["skipped"]}, ensure_ascii=False))
+        return code
+    for line in adopt.render(project, found, counts=counts, update=args.update):
+        print(line)
+    return code
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     """`verify [--rev REV] [--strict]` -> one line per criterion that is not ok, then a total."""
     project = _project(args)
@@ -1217,6 +1255,7 @@ _IMPLEMENTED_HANDLERS = {
     "sync": _cmd_sync,
     "fold-docs": _cmd_fold_docs,
     "verify": _cmd_verify,
+    "adopt": _cmd_adopt,
 }
 
 

@@ -57,6 +57,8 @@ EXPECTED_VERB_CARDS = {
     "fold-docs": "HP-16",
     # HP-18: evidence quotes are checked against a git revision (DOC5 section 2.6)
     "verify": "HP-18",
+    # HP-19: bring an existing repository's Markdown in without a hand-written importer
+    "adopt": "HP-19",
 }
 
 # The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:
