@@ -21,13 +21,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import (code_coverage, docs_text, export, external, graph, importmd, lint, model,
-                   plan, scan, store)
+    from . import (code_coverage, docs_text, export, external, fold, graph, importmd, lint,
+                   model, plan, scan, store)
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
     import export  # type: ignore[no-redef]
     import external  # type: ignore[no-redef]
+    import fold  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
     import importmd  # type: ignore[no-redef]
     import lint  # type: ignore[no-redef]
@@ -62,16 +63,18 @@ VERB_CARDS: dict[str, str] = {
     "scan-prd": "HP-8",
     "import-md": "HP-10",
     "sync": "HP-12",
+    "fold-docs": "HP-16",
 }
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
 # Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
 # HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
-# HP-6: trace and next; HP-7: lint; HP-8: scan-prd; HP-10: import-md; HP-12: sync).
+# HP-6: trace and next; HP-7: lint; HP-8: scan-prd; HP-10: import-md; HP-12: sync;
+# HP-16: fold-docs).
 IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
-               "lint", "scan-prd", "import-md", "sync"}
+               "lint", "scan-prd", "import-md", "sync", "fold-docs"}
 
 SEP = "  "
 
@@ -248,6 +251,16 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_import.add_argument("--as", dest="as_slug", default=None, metavar="SLUG",
                           help="Create the project under this slug instead of the"
                                " one in project.yaml")
+
+    p_fold = subs.add_parser(
+        "fold-docs",
+        help="Move spec DOC text onto the S# it defines (schema v2 bodies); a plan"
+             " unless --apply",
+    )
+    p_fold.add_argument("--apply", dest="apply", action="store_true", default=False,
+                        help="Do it: copy the text into the S# body, then delete the"
+                             " DOC row, links and body file (one transaction)")
+    _add_project_option(p_fold)
 
     p_import_md = subs.add_parser(
         "import-md",
@@ -764,6 +777,16 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
 
 
+def _cmd_fold_docs(args: argparse.Namespace) -> int:
+    """`fold-docs [--apply]` -> the plan (one line per spec) or the applied total."""
+    project = _project(args)
+    found = fold.plan(project)
+    applied = fold.apply(project) if args.apply and found["items"] else None
+    for line in fold.render(project, found, applied=applied):
+        print(line)
+    return EXIT_OK
+
+
 def _cmd_import_md(args: argparse.Namespace) -> int:
     """`import-md DIR [--dry-run]` -> the counts line; cross-check problems exit 1 (A25)."""
     project = args.project if args.project is not None else store.resolve_project()
@@ -1087,6 +1110,7 @@ _IMPLEMENTED_HANDLERS = {
     "scan-prd": _cmd_scan_prd,
     "import-md": _cmd_import_md,
     "sync": _cmd_sync,
+    "fold-docs": _cmd_fold_docs,
 }
 
 

@@ -52,6 +52,8 @@ EXPECTED_VERB_CARDS = {
     # HP-10 and HP-12 add two verbs that are not in S4's table (S6 and S5 define them)
     "import-md": "HP-10",
     "sync": "HP-12",
+    # HP-16: the one-time bridge from schema-v1 spec DOCs to schema-v2 S# bodies (DOC5 section 7)
+    "fold-docs": "HP-16",
 }
 
 # The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:
