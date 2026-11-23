@@ -22,13 +22,15 @@ prints it on every lint run.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import graph, model, scan, store
+    from . import code_coverage, graph, model, scan, store
 except ImportError:  # top-level module (test suite)
+    import code_coverage  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import scan  # type: ignore[no-redef]
@@ -71,7 +73,13 @@ _RETIRED_WORD = {"feature": "cut", "requirement": "dropped"}
 
 
 def _sort_key(finding: Finding) -> tuple:
-    """Kind order, then numeric id, then flag name — stable and deterministic."""
+    """Kind order, then numeric id, then flag name — stable and deterministic.
+
+    A ``project`` ref (the coverage infos) carries no id: it sorts after every
+    R/A/F/S/DOC finding, then by message.
+    """
+    if finding.ref == "project":
+        return (len(KIND_ORDER), 0, finding.flag, finding.message)
     match = _REF_RE.match(finding.ref)
     if match is None:                                  # defensive: never expected
         return (len(KIND_ORDER), 0, finding.flag)
@@ -183,7 +191,45 @@ def scan_project(project: str, con=None) -> dict:
 
 
 # ------------------------------------------------------------------- facts (read)
-def load_facts(con, project: str) -> dict:
+def _paths_list(value: object) -> list[str]:
+    """A stored ``paths`` value as a list of strings.
+
+    The store keeps ``paths`` as a JSON list text (``store.create_entity`` dumps
+    it); ``cli`` and ``export`` read it back the same way. Anything unparsable is
+    one path, and an empty value is no claim at all.
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        try:
+            items = json.loads(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            items = [value]
+        if not isinstance(items, list):
+            items = [items]
+    return [str(item) for item in items if str(item).strip()]
+
+
+def _coverage_entries(facts: dict) -> dict[str, list[str]]:
+    """Every live entry with a non-empty ``paths`` list, as ``{"F3": [...]}``.
+
+    A retired entry (a ``cut`` feature, a ``superseded`` spec) makes no claim: its
+    paths no longer describe work this build intends to do.
+    """
+    entries: dict[str, list[str]] = {}
+    for bucket, prefix, retired in (("features", "F", "cut"), ("specs", "S", "superseded")):
+        for row in facts[bucket]:
+            if row.get("status") == retired:
+                continue
+            paths = _paths_list(row.get("paths"))
+            if paths:
+                entries[f"{prefix}{row['id']}"] = paths
+    return entries
+
+
+def load_facts(con, project: str, *, coverage: bool = False) -> dict:
     """Everything ``check`` needs, read-only from the store (and the body files).
 
     ``doc_drift`` is a FILE fact, not a store fact: the stored ``body_hash`` is
@@ -193,6 +239,10 @@ def load_facts(con, project: str) -> dict:
     ``doc_problems`` is the reference scan of the scannable documents, so the
     ``broken_reference`` check needs no file read of its own and ``check`` stays
     pure: a list of ``(doc_ref, scan.Problem)``.
+
+    ``coverage=True`` adds one more fact, ``coverage``: the ``code_coverage``
+    report for the project's root, with every live F#/S# ``paths`` claim as an
+    entry. It needs a real root directory, so a project without one raises.
     """
     items = store.list_entities(project, con=con)      # R, F, S, A, DOC with links
     facts: dict[str, Any] = {
@@ -232,6 +282,16 @@ def load_facts(con, project: str) -> dict:
         doc_ref = f"DOC{doc_row['id']}"
         facts["doc_problems"].extend(
             (doc_ref, problem) for problem in scan.scan_text(text, resolver))
+    if coverage:
+        project_row = store.get_project(project, con=con) or {}
+        root = project_row.get("root")
+        if not root or not Path(root).is_dir():
+            raise store.StoreError(
+                "--coverage needs the project's root directory"
+                f" (project add --root DIR); {project} has root {root or 'none'}"
+            )
+        facts["coverage"] = code_coverage.coverage_report(
+            code_coverage.walk_repo(root), _coverage_entries(facts), max_items=50)
     return facts
 
 
@@ -270,7 +330,32 @@ def check(facts: dict) -> list[Finding]:
     for doc_ref, problem in facts.get("doc_problems") or []:
         rendered = scan.format_problem("", problem)[1:]        # drop the leading colon
         findings.append(Finding("broken_reference", "error", doc_ref, f"line {rendered}"))
+    findings += _coverage_findings(facts.get("coverage"))
     return sorted(findings, key=_sort_key)
+
+
+def _coverage_findings(report: Optional[dict]) -> list[Finding]:
+    """uncovered_path infos for one ``code_coverage`` report (PURE; None yields none).
+
+    Listed items are already bounded by the report's ``max_items``; each list the
+    report truncated gets one extra info naming how many it hid.
+    """
+    if not report:
+        return []
+    findings: list[Finding] = []
+    for path in report.get("uncovered_packages") or ():
+        findings.append(Finding("uncovered_path", "info", "project",
+                                f"package {path}: no F#/S# paths entry covers it"))
+    for path in report.get("uncovered_specs") or ():
+        findings.append(Finding("uncovered_path", "info", "project",
+                                f"spec {path}: no F#/S# paths entry covers it"))
+    truncated = report.get("truncated") or {}
+    for key, label in (("uncovered_packages", "packages"), ("uncovered_specs", "specs")):
+        hidden = int(truncated.get(key, 0) or 0)
+        if hidden > 0:
+            findings.append(Finding("uncovered_path", "info", "project",
+                                    f"and {hidden} more uncovered {label}"))
+    return findings
 
 
 def _requirement_findings(requirement: dict, own_criteria: list[dict]) -> list[Finding]:
@@ -447,12 +532,12 @@ def _doc_findings(doc_row: dict, drifted: set) -> list[Finding]:
 
 
 # ------------------------------------------------------------------------- run
-def run(project: str, con=None) -> list[Finding]:
+def run(project: str, con=None, *, coverage: bool = False) -> list[Finding]:
     """``check(load_facts(...))`` for one project; opens its own connection if needed."""
     own = con is None
     con = con or store.connect()
     try:
-        facts = load_facts(con, project)
+        facts = load_facts(con, project, coverage=coverage)
     finally:
         if own:
             con.close()

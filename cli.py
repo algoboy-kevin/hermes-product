@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import docs_text, export, graph, lint, model, plan, scan, store
+    from . import code_coverage, docs_text, export, graph, lint, model, plan, scan, store
 except ImportError:  # top-level module (test suite)
+    import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
     import export  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
@@ -197,6 +198,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_lint = subs.add_parser("lint", help="All checks in S2")
     p_lint.add_argument("--json", dest="json", action="store_true", default=False,
                         help="Print one JSON object instead of text")
+    p_lint.add_argument("--coverage", action="store_true", default=False,
+                        help="Also report packages and specs no F#/S# paths cover")
     _add_project_option(p_lint)
     p_graph = subs.add_parser(
         "graph",
@@ -892,9 +895,24 @@ def _cmd_next(args: argparse.Namespace) -> int:
 
 
 def _cmd_lint(args: argparse.Namespace) -> int:
-    """`lint [--json] [--project SLUG]` -> the S2 section 3 report; exit 1 on any Error."""
+    """`lint [--json] [--coverage] [--project SLUG]` -> the S2 section 3 report.
+
+    ``--coverage`` is opt-in: it adds the uncovered_path infos and the report line
+    (and, with ``--json``, the report dict and an empty ``not_yet``). Without it
+    the output is exactly the HP-7 one. Exit 1 on any Error; info never counts.
+    """
     project = _project(args)
-    findings = lint.run(project)
+    report: Optional[dict] = None
+    if getattr(args, "coverage", False):
+        con = store.connect()
+        try:
+            facts = lint.load_facts(con, project, coverage=True)
+        finally:
+            con.close()
+        findings = lint.check(facts)
+        report = facts.get("coverage")
+    else:
+        findings = lint.run(project)
     errors = sum(1 for finding in findings if finding.severity == "error")
     warnings = sum(1 for finding in findings if finding.severity == "warning")
     if args.json:
@@ -905,14 +923,19 @@ def _cmd_lint(args: argparse.Namespace) -> int:
             "findings": [{"flag": finding.flag, "severity": finding.severity,
                           "ref": finding.ref, "message": finding.message}
                          for finding in findings],
-            "not_yet": list(lint.NOT_YET),
+            "not_yet": [] if report is not None else list(lint.NOT_YET),
         }
+        if report is not None:
+            payload["coverage"] = report
         print(json.dumps(payload, sort_keys=True))
     else:
         print(f"lint ({project}): {errors} errors, {warnings} warnings")
         for finding in findings:
             print(f"{finding.severity} {finding.flag} {finding.ref}  {finding.message}")
-        print(f"not yet checked: {', '.join(lint.NOT_YET)}")
+        if report is not None:
+            print(code_coverage.format_report(report)[0])
+        else:
+            print(f"not yet checked: {', '.join(lint.NOT_YET)}")
     return EXIT_ERROR if errors else EXIT_OK
 
 
