@@ -1,0 +1,18 @@
+name: product
+version: 0.0.1
+description: "Product knowledge for a project — requirements, acceptance criteria, features, specs and supporting documents as linked entries (R#/A#/F#/S#/DOC#) behind a compact `hermes product` CLI."
+author: kevin
+kind: standalone
+requires_hermes: ">=0.21.5"
+platforms:
+  - macos
+  - linux
+  - windows
+# Scaffold (card HP-0): nothing is registered beyond the CLI yet. Later cards add
+# tools, a skill and a prompt section and update these lists to match register(ctx).
+provides_tools: []
+provides_hooks: []
+# Core Hermes already pins ruamel.yaml 0.18.16; the plugin needs round-trip YAML so
+# hand edits and comments survive a write. Floor + upper bound, per catalog policy.
+python_dependencies:
+  - "ruamel.yaml>=0.18,<0.19"

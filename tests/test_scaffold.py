@@ -1,0 +1,186 @@
+"""Scaffold tests for the `product` plugin (card HP-0).
+
+What is pinned here, and only here:
+
+* the manifest fields Hermes and the catalog read (plugin.yaml);
+* ``register(ctx)`` touching exactly one surface (the CLI command) and never raising;
+* every CLI verb path being a loud stub: exit 2 and one stderr line naming the
+  verb path and the card that will implement it;
+* the CLI verb list staying in sync with the S4 command table.
+
+No test reads docs/: the expected verb names are transcribed into constants below
+(a later card imports the product documents into the plugin's store).
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+import ruamel.yaml
+
+from cli import VERB_CARDS, product_command, register_cli
+
+ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_YAML = ROOT / "plugin.yaml"
+PLUGIN_NAME = "product_plugin_under_test"
+
+# Verb path -> implementing card, as specified by the card HP-0 brief.
+# Kept independent of cli.VERB_CARDS on purpose: the stub must print these.
+EXPECTED_VERB_CARDS = {
+    "project add": "HP-1",
+    "project list": "HP-1",
+    "project use": "HP-1",
+    "add": "HP-2",
+    "set": "HP-2",
+    "show": "HP-2",
+    "list": "HP-2",
+    "link": "HP-3",
+    "unlink": "HP-3",
+    "graph": "HP-3",
+    "doc read": "HP-4",
+    "export": "HP-5",
+    "import": "HP-5",
+    "trace": "HP-6",
+    "next": "HP-6",
+    "lint": "HP-7",
+    "scan-prd": "HP-8",
+}
+
+# The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:
+# "project add / list / use", "add", "set", "link / unlink", "show", "trace",
+# "next", "lint", "graph", "doc read", "scan-prd", "export / import".
+S4_VERB_PATHS = {
+    "project add", "project list", "project use",
+    "add", "set", "link", "unlink", "show",
+    "trace", "next", "lint", "graph",
+    "doc read", "scan-prd", "export", "import",
+}
+
+
+def _plugin():
+    """Load the plugin package the way Hermes does: ``__init__.py`` with relative imports.
+
+    ``conftest.py`` puts the repo root on ``sys.path`` for the top-level modules, but
+    ``__init__.py`` says ``from .cli import ...``, so it is imported as a package
+    (submodule_search_locations points back at the repo root).
+    """
+    if PLUGIN_NAME in sys.modules:
+        return sys.modules[PLUGIN_NAME]
+    spec = importlib.util.spec_from_file_location(
+        PLUGIN_NAME, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[PLUGIN_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="hermes product")
+    register_cli(parser)
+    return parser
+
+
+# ------------------------------------------------------------------ a. the manifest
+def test_plugin_yaml_manifest() -> None:
+    yaml = ruamel.yaml.YAML(typ="safe")
+    with PLUGIN_YAML.open(encoding="utf-8") as fh:
+        data = yaml.load(fh)
+    assert data["name"] == "product"
+    assert data["version"]
+    assert data["kind"]
+    assert data["requires_hermes"]
+
+
+# ------------------------------------------------------------------ b. register(ctx)
+class _FakeCtx:
+    """Records what ``register(ctx)`` asks of a Hermes PluginContext."""
+
+    def __init__(self) -> None:
+        self.tools: list[dict] = []
+        self.cli: list[dict] = []
+        self.skills: list[dict] = []
+        self.sections: list[dict] = []
+
+    def register_tool(self, **kwargs) -> None:
+        self.tools.append(kwargs)
+
+    def register_cli_command(self, **kwargs) -> None:
+        self.cli.append(kwargs)
+
+    def register_skill(self, *args, **kwargs) -> None:
+        self.skills.append({"args": args, **kwargs})
+
+    def register_system_prompt_section(self, *args, **kwargs) -> None:
+        self.sections.append({"args": args, **kwargs})
+
+
+def test_register_adds_exactly_the_cli_command() -> None:
+    ctx = _FakeCtx()
+    plugin = _plugin()
+    plugin.register(ctx)                                           # must not raise
+
+    assert len(ctx.cli) == 1
+    assert ctx.cli[0]["name"] == "product"
+    # The package loads its own `cli` submodule (relative import), a different
+    # module object than the top-level `cli` import: compare against that one.
+    assert ctx.cli[0]["setup_fn"] is plugin.cli.register_cli
+    assert ctx.cli[0]["handler_fn"] is plugin.cli.product_command
+    # Nothing else is registered yet: no tools, skill or prompt section.
+    assert ctx.tools == []
+    assert ctx.skills == []
+    assert ctx.sections == []
+
+
+def test_register_never_raises_when_the_ctx_raises() -> None:
+    class _BoomCtx(_FakeCtx):
+        def register_cli_command(self, **kwargs) -> None:
+            raise RuntimeError("boom")
+
+    _plugin().register(_BoomCtx())                                  # must not raise
+
+
+# ------------------------------------------------------------------ c. loud stubs
+@pytest.mark.parametrize("verb_path,card", sorted(EXPECTED_VERB_CARDS.items()))
+def test_verb_is_a_loud_stub(verb_path: str, card: str, capsys) -> None:
+    args = _build_parser().parse_args(verb_path.split())
+    rc = product_command(args)
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert f"NOT IMPLEMENTED: {verb_path} (card {card})" in captured.err
+
+
+# ------------------------------------------------------------------ d. help output
+def test_help_lists_every_top_level_verb() -> None:
+    text = _build_parser().format_help()
+    top_level = {path.split()[0] for path in EXPECTED_VERB_CARDS}
+    for verb in top_level:
+        assert verb in text
+
+
+# ------------------------------------------------------------------ e. S4 coverage
+def test_s4_command_table_is_fully_covered() -> None:
+    # Verb names come from the constant in cli.py, not from docs/.
+    assert S4_VERB_PATHS <= set(VERB_CARDS)
+    assert set(VERB_CARDS) == set(EXPECTED_VERB_CARDS)
+
+
+# ------------------------------------------- extra: the rest of the HP-0 cli contract
+def test_no_verb_prints_help_and_returns_zero(capsys) -> None:
+    args = _build_parser().parse_args([])
+    rc = product_command(args)
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "usage:" in captured.out
+
+
+def test_extra_args_are_accepted_and_ignored(capsys) -> None:
+    args = _build_parser().parse_args(["show", "R3", "extra", "words"])
+    rc = product_command(args)
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "NOT IMPLEMENTED: show (card HP-2)" in captured.err
