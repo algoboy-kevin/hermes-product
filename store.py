@@ -1392,6 +1392,17 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
         if kind in model.BODY_KINDS and "body" in values:
             row_body_changed = values["body"] != row.get("body")
 
+        clean_reason = (str(reason).strip() or None) if reason is not None else None
+        # HP-12: `--reason` also fills status_reason on a move to a terminal state,
+        # unless the call names status_reason itself. A non-terminal move never
+        # touches status_reason, and a kind without the column (DOC) is skipped.
+        if ("status" in values
+                and values["status"] in model.TERMINAL.get(kind, ())
+                and clean_reason
+                and "status_reason" in model.SET_FIELDS[kind]
+                and "status_reason" not in values):
+            values["status_reason"] = clean_reason
+
         merged = {**row, **values}
         model.check_blocked(merged)
 
@@ -1408,7 +1419,6 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
 
         statement_changed = (kind == "requirement" and "statement" in values
                              and values["statement"] != row["statement"])
-        clean_reason = (str(reason).strip() or None) if reason is not None else None
         if (statement_changed and row["status"] in model.APPROVED_OR_LATER
                 and clean_reason is None):
             raise model.ValidationError(
@@ -1622,12 +1632,17 @@ def link_entries(project: str, first: str, second: Optional[str] = None, *,
 
         if not remove and kind_a == kind_b and id_a == id_b:
             raise model.ValidationError(f"cannot link {ref_a} to itself")
-        _refuse_retired(con, project, kind_a, id_a, verb)
-        _refuse_retired(con, project, kind_b, id_b, verb)
+        doc_kind, doc_id = (kind_a, id_a) if kind_a == "doc" else (kind_b, id_b)
+        entity_kind, entity_id = (kind_b, id_b) if kind_a == "doc" else (kind_a, id_a)
+        if doc_pair:
+            # HP-12: a history document may point at a retired entry (a dropped R#,
+            # cut F# or superseded S#), so only a retired DOC itself is refused.
+            _refuse_retired(con, project, doc_kind, doc_id, verb)
+        else:
+            _refuse_retired(con, project, kind_a, id_a, verb)
+            _refuse_retired(con, project, kind_b, id_b, verb)
 
         if doc_pair:
-            doc_kind, doc_id = (kind_a, id_a) if kind_a == "doc" else (kind_b, id_b)
-            entity_kind, entity_id = (kind_b, id_b) if kind_a == "doc" else (kind_a, id_a)
             exists = con.execute(
                 "SELECT 1 FROM doc_link WHERE project = ? AND doc_id = ?"
                 " AND entity_type = ? AND entity_id = ?",
@@ -1641,9 +1656,21 @@ def link_entries(project: str, first: str, second: Optional[str] = None, *,
             ).fetchone() is not None
 
         if remove and not exists:
-            raise model.ValidationError(f"no such link: {ref_a} {ref_b}")
+            # HP-12: unlink is idempotent. A missing link reports on stdout, exits 0,
+            # and writes nothing (no row, no history, no updated_at stamp).
+            return {
+                "verb": verb, "table": table, "subject": ref_a, "other": ref_b,
+                "optional": optional_value if dependency else 0,
+                "message": f"not linked: {ref_a} {ref_b}", "changed": False,
+            }
         if not remove and exists:
-            raise model.ValidationError(f"already linked: {ref_a} {ref_b}")
+            # HP-12: link is idempotent. An existing link reports on stdout, exits 0,
+            # and writes nothing (no row, no history, no updated_at stamp).
+            return {
+                "verb": verb, "table": table, "subject": ref_a, "other": ref_b,
+                "optional": optional_value if dependency else 0,
+                "message": f"already linked: {ref_a} {ref_b}", "changed": False,
+            }
 
         if not remove and dependency:
             edges = [tuple(row) for row in con.execute(
@@ -1728,6 +1755,7 @@ def link_entries(project: str, first: str, second: Optional[str] = None, *,
             "other": ref_b,
             "optional": optional_value if dependency else 0,
             "message": message,
+            "changed": True,
         }
     finally:
         if own:

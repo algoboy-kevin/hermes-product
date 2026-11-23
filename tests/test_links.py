@@ -157,25 +157,33 @@ def test_unlink_a_dependency(home: Path, capsys) -> None:
 
 
 def test_unlink_a_link_that_does_not_exist(home: Path, capsys) -> None:
+    # HP-12: old -> rc 1 with "no such link: F1 R1" on stderr; new -> rc 0 with
+    # "not linked: F1 R1" on stdout and nothing written (idempotent unlink).
     make_project()
     add_requirement()
     add_feature()
-    rc, _out, err = cli(capsys, "unlink", "F1", "R1")
-    assert rc == 1
-    assert "no such link: F1 R1" in err
+    rc, out, err = cli(capsys, "unlink", "F1", "R1")
+    assert rc == 0, err
+    assert out == "not linked: F1 R1\n"
     assert table_rows(PROJECT, "feature_requirement") == []
+    assert history_rows(PROJECT, "feature", 1) == []
+    assert history_rows(PROJECT, "requirement", 1) == []
 
 
 # ----------------------------------------------------------- refusals: the shape
 def test_duplicate_link_is_refused(home: Path, capsys) -> None:
+    # HP-12: old -> rc 1 with "already linked" on stderr; new -> rc 0 with the same
+    # message on stdout and nothing written (idempotent link).
     make_project()
     add_requirement()
     add_feature()
     assert cli(capsys, "link", "F1", "R1")[0] == 0
-    rc, _out, err = cli(capsys, "link", "R1", "F1")
-    assert rc == 1
-    assert "already linked" in err
+    before = history_rows(PROJECT, "feature", 1)
+    rc, out, err = cli(capsys, "link", "R1", "F1")
+    assert rc == 0, err
+    assert out == "already linked: R1 F1\n"
     assert table_rows(PROJECT, "feature_requirement") == [(1, 1)]
+    assert history_rows(PROJECT, "feature", 1) == before
 
 
 def test_self_dependency_is_refused(home: Path, capsys) -> None:
@@ -390,11 +398,14 @@ def test_link_stamps_updated_at_on_both_entities(home: Path, capsys, monkeypatch
 
 
 def test_a_refused_link_writes_nothing(home: Path, capsys) -> None:
+    # HP-12: a duplicate link is now idempotent (rc 0) yet still writes nothing, so
+    # this A6 test shows the write-nothing claim with both it and a real refusal.
     make_project()
     add_requirement()
     add_feature()
     assert cli(capsys, "link", "F1", "R1")[0] == 0
-    assert cli(capsys, "link", "R1", "F1")[0] == 1          # duplicate
+    assert cli(capsys, "link", "R1", "F1")[0] == 0            # idempotent, not a write
+    assert cli(capsys, "link", "F1", "R9")[0] == 1            # refused
     assert len(history_rows(PROJECT, "feature", 1)) == 1
     assert len(history_rows(PROJECT, "requirement", 1)) == 1
 

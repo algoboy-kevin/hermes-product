@@ -513,3 +513,57 @@ def test_unknown_state_is_refused(home: Path, capsys) -> None:
     assert rc == 1
     assert "shipped" in err
     assert status_of(PROJECT, "requirement", 1) == "draft"
+
+
+# ------------------------------------------- --reason fills status_reason (HP-12)
+def test_reason_fills_status_reason_on_a_drop(home: Path, con, capsys) -> None:
+    make_project()
+    add_requirement()
+    add_feature()
+    link_feature_requirement(con, PROJECT, 1, 1)
+    rc, out, err = move(capsys, "R1", "dropped", reason="owner ruling")
+    assert rc == 0, err
+    assert out == "R1 draft -> dropped\n"
+    assert store.get_entity(PROJECT, "R1")["row"]["status_reason"] == "owner ruling"
+    logged = [e for e in history_rows(PROJECT, "requirement", 1)
+              if e["change"] == "status draft -> dropped"]
+    assert [e["reason"] for e in logged] == ["owner ruling"]
+
+
+def test_an_explicit_status_reason_wins_over_the_reason_flag(
+    home: Path, capsys
+) -> None:
+    make_project()
+    add_requirement()
+    rc, _out, err = move(capsys, "R1", "dropped", "status_reason=explicit",
+                         reason="other")
+    assert rc == 0, err
+    assert store.get_entity(PROJECT, "R1")["row"]["status_reason"] == "explicit"
+
+
+def test_a_non_terminal_move_ignores_the_reason_flag(home: Path, con, capsys) -> None:
+    make_project()
+    add_requirement()
+    add_feature()
+    link_feature_requirement(con, PROJECT, 1, 1)
+    rc, _out, err = move(capsys, "R1", "approved", "rationale=Revenue", reason="why")
+    assert rc == 0, err
+    assert not store.get_entity(PROJECT, "R1")["row"]["status_reason"]
+
+
+def test_reason_fills_status_reason_on_a_cut_feature(home: Path, capsys) -> None:
+    make_project()
+    add_feature()
+    rc, out, err = move(capsys, "F1", "cut", reason="gone")
+    assert rc == 0, err
+    assert out == "F1 planned -> cut\n"
+    assert store.get_entity(PROJECT, "F1")["row"]["status_reason"] == "gone"
+
+
+def test_a_drop_without_any_reason_is_still_refused(home: Path, capsys) -> None:
+    make_project()
+    add_requirement()
+    rc, _out, err = move(capsys, "R1", "dropped")
+    assert rc == 1
+    assert "needs status_reason" in err
+    assert status_of(PROJECT, "requirement", 1) == "draft"

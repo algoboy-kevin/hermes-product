@@ -323,14 +323,42 @@ def test_a_doc_cannot_link_to_another_doc(home: Path, capsys) -> None:
     assert table_rows(PROJECT, "doc_link") == []
 
 
-def test_a_retired_target_is_refused(home: Path, capsys) -> None:
+def test_a_retired_target_can_be_linked(home: Path, capsys) -> None:
+    # HP-12: old -> rc 1 `cannot link F1: it is cut`; new -> the link succeeds and
+    # the history document lists the cut feature.
     make_project()
     add_feature()
     add_doc()
     assert cli(capsys, "set", "F1", "status=cut", "status_reason=Deferred")[0] == 0
-    rc, _out, err = cli(capsys, "link", "DOC1", "F1")
-    assert rc == 1
-    assert "cannot link F1: it is cut" in err
+    rc, out, err = cli(capsys, "link", "DOC1", "F1")
+    assert rc == 0, err
+    assert out == "DOC1 linked F1\n"
+    assert table_rows(PROJECT, "doc_link") == [(1, "feature", 1)]
+    assert "links F1" in cli(capsys, "list", "DOC")[1]
+
+
+def test_a_doc_may_link_to_a_dropped_requirement(home: Path, capsys) -> None:
+    make_project()
+    add_requirement()
+    add_doc()
+    assert cli(capsys, "set", "R1", "status=dropped", "status_reason=Owner ruling")[0] == 0
+    rc, out, err = cli(capsys, "link", "DOC1", "R1")
+    assert rc == 0, err
+    assert out == "DOC1 linked R1\n"
+    assert table_rows(PROJECT, "doc_link") == [(1, "requirement", 1)]
+
+
+def test_a_doc_may_link_to_a_superseded_spec(home: Path, capsys) -> None:
+    make_project()
+    add_requirement()
+    add_spec()
+    add_spec(title="Payments v2")
+    add_doc()
+    assert cli(capsys, "set", "S2", "status=superseded", "superseded_by=S1")[0] == 0
+    rc, out, err = cli(capsys, "link", "DOC1", "S2")
+    assert rc == 0, err
+    assert out == "DOC1 linked S2\n"
+    assert table_rows(PROJECT, "doc_link") == [(1, "spec", 2)]
 
 
 def test_a_superseded_doc_cannot_be_linked(home: Path, capsys) -> None:
@@ -345,14 +373,18 @@ def test_a_superseded_doc_cannot_be_linked(home: Path, capsys) -> None:
 
 
 def test_a_duplicate_doc_link_is_refused(home: Path, capsys) -> None:
+    # HP-12: old -> rc 1 with "already linked" on stderr; new -> rc 0 with the same
+    # message on stdout and nothing written (idempotent link).
     make_project()
     add_feature()
     add_doc()
     assert cli(capsys, "link", "DOC1", "F1")[0] == 0
-    rc, _out, err = cli(capsys, "link", "DOC1", "F1")
-    assert rc == 1
-    assert "already linked" in err
+    before = history_rows(PROJECT, "doc", 1)
+    rc, out, err = cli(capsys, "link", "DOC1", "F1")
+    assert rc == 0, err
+    assert out == "already linked: DOC1 F1\n"
     assert table_rows(PROJECT, "doc_link") == [(1, "feature", 1)]
+    assert history_rows(PROJECT, "doc", 1) == before
 
 
 def test_a_cross_project_doc_link_is_refused(home: Path, capsys) -> None:
@@ -375,9 +407,13 @@ def test_unlink_a_doc_link_and_its_missing_case(home: Path, capsys) -> None:
     assert rc == 0, err
     assert out == "DOC1 unlinked F1\n"
     assert table_rows(PROJECT, "doc_link") == []
-    rc, _out, err = cli(capsys, "unlink", "DOC1", "F1")
-    assert rc == 1
-    assert "no such link: DOC1 F1" in err
+    # HP-12: old -> rc 1 with "no such link: DOC1 F1" on stderr; new -> rc 0 with
+    # "not linked: DOC1 F1" on stdout and nothing written (idempotent unlink).
+    before = history_rows(PROJECT, "doc", 1)
+    rc, out, err = cli(capsys, "unlink", "DOC1", "F1")
+    assert rc == 0, err
+    assert out == "not linked: DOC1 F1\n"
+    assert history_rows(PROJECT, "doc", 1) == before
 
 
 # ---------------------------------------------------------------------- output

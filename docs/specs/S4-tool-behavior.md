@@ -13,7 +13,7 @@ S7  approved        Use PaymentIntents with 3DS     R:3                F:stripe
 DOC4 design  current  Stripe webhook flow           links F7,S7
 ```
 
-Detail (full statement, criteria text, notes, history) is returned only on request: `show R3`. Documents appear as one line with their summary; the body is read separately. An R#, F# or S# with a body shows one `body: N chars` line; `show REF --body [--section H] [--max-chars N]` reads it, bounded, with a truncation trailer (S1 section 3.1). `list`, `trace` and `next` never print a body.
+Detail (full statement, criteria text, notes, history) is returned only on request: `show R3`. Documents appear as one line with their summary; the body is read separately. An R#, F# or S# with a body shows one `body: N chars` line; `show REF --body [--section H] [--max-chars N]` reads it, bounded, with a truncation trailer (S1 section 3.1). `list`, `trace` and `next` never print a body. `list --json` prints one object instead of one line per item: `ok`, `project`, `kind`, `count` and `items` (each item's `doc_links` as ref strings); without the flag the lines are unchanged.
 
 ## 2. Commands
 
@@ -21,8 +21,8 @@ Detail (full statement, criteria text, notes, history) is returned only on reque
 |---|---|
 | project add / list / use / set | Create a project, list projects, pick one, change its `name` or `root` (the slug never changes; `root=-` clears it). Without `--project`, the project whose `root` contains the working directory is used |
 | add | Create an R#, A#, F#, S# or DOC#. `--body` / `--body-file` store the defining text on an R#, F# or S# (or the body of a DOC#); on an A# they are refused, never dropped |
-| set | Change a field or status (validated) |
-| link / unlink | Create or remove a relation, or add a dependency edge |
+| set | Change a field or status (validated). `--reason` gives the why for a statement change and also fills `status_reason` when the status moves to dropped, cut or superseded |
+| link / unlink | Create or remove a relation, or add a dependency edge. Both are idempotent: linking an existing pair or unlinking a missing one reports it on stdout and exits 0, and writes nothing. A DOC can link to a retired entry (dropped R#, cut F#, superseded S#) |
 | show | Full detail for one entry |
 | trace | For one entry, everything connected: requirement -> features, specs, criteria, docs, cards |
 | next | What to work on next: unblocked, highest priority, dependencies met |

@@ -177,7 +177,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                        help="field=value pairs (quote values that contain spaces)")
     p_set.add_argument("--reason", default=None,
                        help="Why the change happened; required for a statement change"
-                            " once the requirement is approved")
+                            " once the requirement is approved; also fills status_reason"
+                            " when the status moves to dropped, cut or superseded")
     p_set.add_argument("--override-reason", dest="override_reason", default=None,
                        help="Record the reason a feature starts in_progress while a"
                             " mandatory dependency is still planned")
@@ -221,6 +222,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                         help="Only this kind (default: R, then F, then S, then A)")
     p_list.add_argument("--status", default=None, help="Only entries in this state")
     p_list.add_argument("--limit", type=int, default=None, help="At most N lines")
+    p_list.add_argument("--json", dest="list_json", action="store_true", default=False,
+                        help="Print one JSON object instead of one line per item")
     _add_project_option(p_list)
 
     p_trace = subs.add_parser(
@@ -646,6 +649,17 @@ def _cmd_list(args: argparse.Namespace) -> int:
         )
     project = _project(args)
     items = store.list_entities(project, args.kind, status=args.status, limit=args.limit)
+    if args.list_json:
+        rows: list[dict] = []
+        for item in items:
+            one = dict(item)
+            if one["kind"] == "doc":
+                one["doc_links"] = [model.format_ref(link_kind, link_id)
+                                    for link_kind, link_id in one.get("doc_links") or ()]
+            rows.append(one)
+        print(json.dumps({"ok": True, "project": project, "kind": args.kind,
+                          "count": len(rows), "items": rows}, sort_keys=True))
+        return EXIT_OK
     for item in items:
         print(_render_item(item))
     return EXIT_OK
