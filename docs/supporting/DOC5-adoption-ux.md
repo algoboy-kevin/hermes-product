@@ -252,18 +252,30 @@ Consequences to design:
 
 ### 7.1 Status (2026-11-23)
 
-Done, committed (6ad32f1, 3ce20ad) and synced into `~/.hermes/plugins/product`; the live store is
-schema v2 (backup `product.db.bak-v1`). Core slice: `body` column on R#/F#/S#; `add --body/--body-file`
-and `set body=` / `--body-file`; refusals instead of silent drops (A#, `--body-ref`, two options);
-`show --body --section --max-chars` plus a size line; `list`/`trace`/`next`/dashboard payloads never
-carry the text; `product_show` agent tool gains `body`, `section`, `max_chars`; S3 export/import
-carries `body`. Fold: `fold-docs` (plan unless `--apply`) with the owner's two rulings (delete the
-folded DOC; several DOCs of one spec become `## <doc title>` sections). Applied to gmd: 48 spec DOCs
-into 29 S# bodies, only the PRD remains a DOC, ids not reused (next DOC50), 842 tests pass, bodies
-verified against the sources on a rehearsal copy first. Pre-fold backup:
-`~/.hermes/product-backups/20261123-pre-fold/`.
+All of section 3 and section 7 is implemented, committed and synced into
+`~/.hermes/plugins/product`; the live store is schema v3 (backups `product.db.bak-v1`, `.bak-v2`).
 
-Not done: a `report` DOC kind, `next` and `thin_summary` lint, `status:`-in-body lint, `scan-prd`
-over entity bodies, bodies on the desktop page, `--if-missing` / `--dry-run` / `--json`, `verify`,
-`project set`, `adopt`. Open follow-up for S29: nine unrelated briefs now live as sections of one
-body; splitting it into S# rows is an editing job, not a tooling one.
+| DOC5 item | Where it landed |
+|---|---|
+| 4 body model (R#/F#/S# `body`, DOC = context) | schema v2; `add/set --body/--body-file`, `show --body --section --max-chars`; refusals instead of silent drops; S3 export/import; agent tool `product_show` |
+| fold of gmd spec DOCs | `fold-docs` (plan unless `--apply`); applied: 48 DOCs -> 29 S# bodies, only the PRD left, backup `~/.hermes/product-backups/20261123-pre-fold/` |
+| `report` DOC kind | schema v3: `doc.kind` is validated by the model, not a CHECK; migrations now run with foreign keys off + `foreign_key_check` |
+| 2.7 `next` phantom work | featureless rollups print apart as `unplanned` (gmd: 3 ready, 9 unplanned instead of 11 ready) |
+| 2.2 placeholder summaries | lint `thin_summary` (title restated, `Imported ... (legacy)`, bare path, under 4 words) |
+| 4.4(4) status in a body | lint `status_in_body` (R#/F#/S# bodies and DOCs, outside code fences) |
+| reference scan | `scan-prd` and `broken_reference` now cover R#/F#/S# bodies (folding did not shrink coverage) |
+| 2.4 / 2.5 | `add --if-missing`; `--dry-run` (real verb on a throwaway copy of the store) and `--json` on add/set/link/unlink/import; `fold-docs --json` |
+| 2.6 evidence | `verify [--rev]` (gmd: 6 passed criteria, 4 ok, 2 drift = quote found, cited line moved by 14) |
+| `project set` | `project set SLUG name=... root=...` |
+| 2.1 `adopt DIR` | plan unless `--apply`, rerun-safe, `--update`, `--json`. On the go-mm-driver repo: 63 rows (47 S#, 16 DOC) in 0.04 s of work, 0 thin summaries, no raw database write, rerun is a no-op |
+| 2.10 desktop | detail panel `Show body`; UI render checks now consume `tests/ui/fixtures/api-entries.json`, generated from the real API and compared in pytest |
+
+Section 5 acceptance, re-run on the repo (rehearsal project, not the live gmd): no raw database write;
+no script outside the CLI; wall clock is the one CLI start-up (~2 s) plus 0.04 s; zero placeholder summaries after
+the run; `verify` re-checks every passed criterion against `HEAD`; `next` lists no feature with neither a
+requirement, a spec nor a path.
+
+Known limits: `adopt` proposes no requirements, features or links (they are decisions, not file text), so a
+fresh adoption reports one `orphan_doc` per DOC until linked; summaries are the first prose paragraph and
+a human should read the proposals; a body is stored in the entity YAML of the export, not as a separate
+file; `verify` does not yet refuse `passed` at write time; S29 in gmd is nine briefs in one body.
