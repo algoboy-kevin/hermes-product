@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import ruamel.yaml
 
-from cli import VERB_CARDS, product_command, register_cli
+from cli import IMPLEMENTED, VERB_CARDS, product_command, register_cli
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_YAML = ROOT / "plugin.yaml"
@@ -145,7 +145,10 @@ def test_register_never_raises_when_the_ctx_raises() -> None:
 
 
 # ------------------------------------------------------------------ c. loud stubs
-@pytest.mark.parametrize("verb_path,card", sorted(EXPECTED_VERB_CARDS.items()))
+@pytest.mark.parametrize(
+    "verb_path,card",
+    sorted((verb, card) for verb, card in EXPECTED_VERB_CARDS.items() if verb not in IMPLEMENTED),
+)
 def test_verb_is_a_loud_stub(verb_path: str, card: str, capsys) -> None:
     args = _build_parser().parse_args(verb_path.split())
     rc = product_command(args)

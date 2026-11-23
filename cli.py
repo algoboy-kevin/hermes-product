@@ -15,7 +15,13 @@ from __future__ import annotations
 import argparse
 import sys
 
+try:  # package submodule (Hermes plugin loader)
+    from . import store
+except ImportError:  # top-level module (test suite)
+    import store  # type: ignore[no-redef]
+
 EXIT_OK = 0
+EXIT_ERROR = 1
 EXIT_NOT_IMPLEMENTED = 2
 
 # The one verb-path -> implementing-card map. HP numbers come from the HP-0 brief.
@@ -41,6 +47,9 @@ VERB_CARDS: dict[str, str] = {
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
+# Verbs this build actually implements (card HP-1: the project verbs).
+IMPLEMENTED = {"project add", "project list", "project use"}
+
 
 def _add_tail(parser: argparse.ArgumentParser) -> None:
     """Accept and ignore anything after the verb (later cards add real options)."""
@@ -58,11 +67,14 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     )
     psubs = p_project.add_subparsers(dest="project_action", metavar="{add,list,use}")
     p_pa = psubs.add_parser("add", help="Create a project")
-    _add_tail(p_pa)
+    p_pa.add_argument("slug", help="Unique short key, lowercase, hyphenated")
+    p_pa.add_argument("name", help="Display name")
+    p_pa.add_argument("--root", default=None,
+                      help="Directory of the code repository, used to pick the project"
+                           " from a working directory")
     p_pl = psubs.add_parser("list", help="List projects")
-    _add_tail(p_pl)
     p_pu = psubs.add_parser("use", help="Pick a project")
-    _add_tail(p_pu)
+    p_pu.add_argument("slug", help="Project slug")
 
     p_add = subs.add_parser("add", help="Create an R#, A#, F#, S# or DOC#")
     _add_tail(p_add)
@@ -130,8 +142,38 @@ def _verb_path(args: argparse.Namespace) -> str | None:
     return action
 
 
+def _project_add(args: argparse.Namespace) -> int:
+    """`project add <slug> <name> [--root PATH]` -> `project <slug> created`."""
+    created = store.create_project(args.slug, args.name, root=args.root)
+    print(f"project {created['slug']} created")
+    return EXIT_OK
+
+
+def _project_list(args: argparse.Namespace) -> int:
+    """`project list` -> `<slug>  <name>  <root or ->`, `*` before the active one."""
+    active = store.get_active_project()
+    for project in store.list_projects():
+        mark = "*" if project["slug"] == active else ""
+        print(f"{mark}{project['slug']}  {project['name']}  {project['root'] or '-'}")
+    return EXIT_OK
+
+
+def _project_use(args: argparse.Namespace) -> int:
+    """`project use <slug>` -> `using <slug>`."""
+    store.set_active_project(args.slug)
+    print(f"using {args.slug}")
+    return EXIT_OK
+
+
+_IMPLEMENTED_HANDLERS = {
+    "project add": _project_add,
+    "project list": _project_list,
+    "project use": _project_use,
+}
+
+
 def product_command(args: argparse.Namespace) -> int:
-    """Every verb is a loud stub: stderr line naming the verb path and card, exit 2."""
+    """Implemented verbs run; every other verb is a loud stub (stderr line, exit 2)."""
     path = _verb_path(args)
     if path is None:
         parser = getattr(args, "_product_parser", None)
@@ -140,6 +182,13 @@ def product_command(args: argparse.Namespace) -> int:
         else:
             print("usage: hermes product {%s}" % ",".join(_TOP_LEVEL))
         return EXIT_OK
+    handler = _IMPLEMENTED_HANDLERS.get(path)
+    if handler is not None:
+        try:
+            return handler(args)
+        except store.StoreError as exc:
+            print(exc, file=sys.stderr)
+            return EXIT_ERROR
     card = VERB_CARDS.get(path)
     if card is None:
         print(f"NOT IMPLEMENTED: {path}", file=sys.stderr)
