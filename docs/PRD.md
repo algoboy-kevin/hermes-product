@@ -50,7 +50,7 @@ The code repository keeps only code, a README and configuration.
 |---|---|
 | `docs` (now) | This repository as markdown, following the model by hand ([R16]). |
 | `mvp` | Store, entities, links, validation, trace, next, lint, supporting documents, text export/import, agent guidance ([R1] to [R11], [R13], [R14]). |
-| `v1.1` | External links to kanban with one-way status mapping ([R12]); desktop page. |
+| `v1.1` | External links to kanban with one-way status mapping ([R12]); desktop page: projects, PRD viewer, card views by state, feature graph ([R17], [R18]). |
 | `growth` | Code references and coverage check ([R15]). |
 
 ## 7. Principles {#principles}

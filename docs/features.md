@@ -14,6 +14,7 @@ Header: `layer | needs | requirements`. A feature cannot be `in_progress` while 
 | F8 | Agent guidance | core | planned | F4 | R14 |
 | F9 | Code references and coverage | growth | planned | F3 | R15 |
 | F10 | Markdown documents (this repo) | foundation | in_progress | - | R16 |
+| F11 | Desktop page | growth | planned | F3,F5 | R17,R18 |
 
 ## Dependency graph
 
@@ -29,6 +30,7 @@ graph LR
   F8["F8 Agent guidance"]
   F9["F9 Code references and coverage"]
   F10["F10 Markdown documents (this repo)"]
+  F11["F11 Desktop page"]
   F1 --> F2
   F2 --> F3
   F3 --> F4
@@ -37,6 +39,8 @@ graph LR
   F3 --> F7
   F4 --> F8
   F3 --> F9
+  F3 --> F11
+  F5 --> F11
 ```
 
 Critical path (longest mandatory chain): F1 -> F2 -> F3 -> F4 -> F8.

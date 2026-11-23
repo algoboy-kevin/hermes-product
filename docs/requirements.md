@@ -115,3 +115,15 @@ Header line: `status | priority | phase | features | specs | criteria`.
 
 **Statement.** This repository's own documents shall follow the model in markdown so a later import is mechanical.
 
+## R17 Desktop navigation
+
+`draft | should | v1.1 | F11 | S4 | A26,A27,A28,A29,A33`
+
+**Statement.** A user can create projects, switch between them as with kanban boards, land on the rendered PRD, and switch between the PRD, requirements, acceptance, features, specs and documents views, so that all product knowledge is reachable from one page.
+
+## R18 Card views by state
+
+`draft | should | v1.1 | F11 | S4 | A30,A31,A32`
+
+**Statement.** The desktop page shall show requirements, acceptance criteria, specs and documents as cards grouped and filterable by state, and features as cards with a switch to a dependency graph, in the same way the kanban and feature-graph pages do.
+

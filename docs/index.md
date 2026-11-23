@@ -26,10 +26,12 @@ Registry of every ID. A reference that is not here is broken ([S6](specs/S6-mark
 | R14 | draft | should | mvp | Agent guidance |
 | R15 | draft | could | growth | Code references |
 | R16 | draft | must | docs | Documents first |
+| R17 | draft | should | v1.1 | Desktop navigation |
+| R18 | draft | should | v1.1 | Card views by state |
 
 ## Acceptance criteria ([acceptance.md](acceptance.md))
 
-A1 to A25, all `not_run`; each belongs to exactly one requirement (see the Req column).
+A1 to A33, all `not_run`; each belongs to exactly one requirement (see the Req column).
 
 ## Features ([features.md](features.md))
 
@@ -45,6 +47,7 @@ A1 to A25, all `not_run`; each belongs to exactly one requirement (see the Req c
 | F8 | planned | Agent guidance |
 | F9 | planned | Code references and coverage |
 | F10 | in_progress | Markdown documents (this repo) |
+| F11 | planned | Desktop page |
 
 ## Specs
 
