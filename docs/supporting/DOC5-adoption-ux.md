@@ -250,16 +250,20 @@ Consequences to design:
    F# = capability boundary. Otherwise the same prose is written twice.
 5. Reject `--body*` on kinds that cannot hold it (today `add S --body-file` silently drops it).
 
-### 7.1 Status of the core slice (2026-11-23)
+### 7.1 Status (2026-11-23)
 
-Implemented in the repo (uncommitted, not yet synced into `~/.hermes/plugins/product`): schema v2
-`body` column on R#/F#/S#; `add --body/--body-file` and `set body=` / `--body-file` on those kinds;
-refusals instead of silent drops (A#, `--body-ref`, two options); `show --body --section
---max-chars` plus a size line; `list`/`trace`/`next`/dashboard payloads never carry the text;
-`product_show` agent tool gains `body`, `section`, `max_chars`; S3 export/import carries `body` in
-the entity YAML; S1/S3/S4 and the agent skill updated. 831 tests pass; migration also proven on a
-copy of the live store (counts identical, `.bak-v1` taken).
+Done, committed (6ad32f1, 3ce20ad) and synced into `~/.hermes/plugins/product`; the live store is
+schema v2 (backup `product.db.bak-v1`). Core slice: `body` column on R#/F#/S#; `add --body/--body-file`
+and `set body=` / `--body-file`; refusals instead of silent drops (A#, `--body-ref`, two options);
+`show --body --section --max-chars` plus a size line; `list`/`trace`/`next`/dashboard payloads never
+carry the text; `product_show` agent tool gains `body`, `section`, `max_chars`; S3 export/import
+carries `body`. Fold: `fold-docs` (plan unless `--apply`) with the owner's two rulings (delete the
+folded DOC; several DOCs of one spec become `## <doc title>` sections). Applied to gmd: 48 spec DOCs
+into 29 S# bodies, only the PRD remains a DOC, ids not reused (next DOC50), 842 tests pass, bodies
+verified against the sources on a rehearsal copy first. Pre-fold backup:
+`~/.hermes/product-backups/20261123-pre-fold/`.
 
-Not in this slice: the fold of gmd's 48 spec DOCs into S# bodies, a `report` DOC kind, `next` and
-`thin_summary` lint, `status:`-in-body lint, `scan-prd` over entity bodies, showing bodies on the
-desktop page, `--if-missing` / `--dry-run` / `--json`, `verify`, `project set`, `adopt`.
+Not done: a `report` DOC kind, `next` and `thin_summary` lint, `status:`-in-body lint, `scan-prd`
+over entity bodies, bodies on the desktop page, `--if-missing` / `--dry-run` / `--json`, `verify`,
+`project set`, `adopt`. Open follow-up for S29: nine unrelated briefs now live as sections of one
+body; splitting it into S# rows is an editing job, not a tooling one.
