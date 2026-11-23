@@ -28,6 +28,7 @@ Detail (full statement, criteria text, notes, history) is returned only on reque
 | next | What to work on next: unblocked, highest priority, dependencies met |
 | lint | All checks in [S2](S2-status-and-lint.md) |
 | fold-docs | One-time migration: move spec DOC text onto the S# it defines (S1 section 3.1). A plan unless `--apply`; one DOC per spec is copied verbatim, several become `## <doc title>` sections; the DOC row, links and body file are then deleted, ids never reused |
+| verify | Check every `passed` criterion whose evidence is `"<verbatim quote>" -- <path>:<line>`: the quote (whitespace and case ignored, at least 25 characters) must occur in that file at `--rev` (default `HEAD` in a git work tree). Verdicts: ok, drift (found far from the cited line), fail, free text (not checkable; fails only with `--strict`). Exit 1 on any fail |
 | graph | Export the feature graph as Mermaid; `--critical` prints the critical path |
 | doc read | Read a DOC body: `doc read DOC4 --section "Retries" --max-chars 4000`; always bounded, reports truncation |
 | scan-prd | Index bracketed references in the PRD and DOC bodies |

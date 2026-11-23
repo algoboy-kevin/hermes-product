@@ -55,6 +55,8 @@ EXPECTED_VERB_CARDS = {
     "sync": "HP-12",
     # HP-16: the one-time bridge from schema-v1 spec DOCs to schema-v2 S# bodies (DOC5 section 7)
     "fold-docs": "HP-16",
+    # HP-18: evidence quotes are checked against a git revision (DOC5 section 2.6)
+    "verify": "HP-18",
 }
 
 # The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:

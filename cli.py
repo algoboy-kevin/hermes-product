@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
     from . import (code_coverage, docs_text, dryrun, export, external, fold, graph, importmd,
-                   lint, model, plan, scan, store)
+                   lint, model, plan, scan, store, verify)
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
@@ -37,6 +37,7 @@ except ImportError:  # top-level module (test suite)
     import plan  # type: ignore[no-redef]
     import scan  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
+    import verify  # type: ignore[no-redef]
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -49,6 +50,7 @@ VERB_CARDS: dict[str, str] = {
     "project list": "HP-1",
     "project use": "HP-1",
     "project set": "HP-17",
+    "verify": "HP-18",
     "add": "HP-2",
     "set": "HP-2",
     "show": "HP-2",
@@ -76,7 +78,7 @@ _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 # HP-16: fold-docs).
 IMPLEMENTED = {"project add", "project list", "project use", "project set", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
-               "lint", "scan-prd", "import-md", "sync", "fold-docs"}
+               "lint", "scan-prd", "import-md", "sync", "fold-docs", "verify"}
 
 SEP = "  "
 
@@ -276,6 +278,27 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                           help="Create the project under this slug instead of the"
                                " one in project.yaml")
     _add_write_options(p_import)
+
+    p_verify = subs.add_parser(
+        "verify",
+        help="Check that every passed criterion's evidence quote really occurs in the cited"
+             " file at a git revision (exit 1 on a miss)",
+    )
+    p_verify.add_argument("--rev", default=None, metavar="REV",
+                          help="Read cited files from this git revision (default HEAD in a git"
+                               " work tree, else the working tree)")
+    p_verify.add_argument("--repo", default=None, metavar="DIR",
+                          help="Directory the evidence paths resolve against (default: the"
+                               " project's root)")
+    p_verify.add_argument("--min-quote", dest="min_quote", type=int,
+                          default=verify.DEFAULT_MIN_QUOTE, metavar="N",
+                          help="Shortest acceptable quote in characters (default %d)"
+                               % verify.DEFAULT_MIN_QUOTE)
+    p_verify.add_argument("--strict", action="store_true", default=False,
+                          help="Free-text evidence (no quote and path:line) also fails")
+    p_verify.add_argument("--json", dest="verify_json", action="store_true", default=False,
+                          help="Print one JSON object instead of lines")
+    _add_project_option(p_verify)
 
     p_fold = subs.add_parser(
         "fold-docs",
@@ -826,6 +849,25 @@ def _cmd_import(args: argparse.Namespace) -> int:
     return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
 
 
+def _cmd_verify(args: argparse.Namespace) -> int:
+    """`verify [--rev REV] [--strict]` -> one line per criterion that is not ok, then a total."""
+    project = _project(args)
+    result = verify.verify_project(project, rev=args.rev, repo=args.repo,
+                                   min_quote=args.min_quote)
+    lines, code = verify.render(project, result, strict=args.strict)
+    if args.verify_json:
+        counts: dict[str, int] = {}
+        for row in result["rows"]:
+            counts[row["verdict"]] = counts.get(row["verdict"], 0) + 1
+        print(json.dumps({"ok": code == 0, "project": project, "rev": result["rev"],
+                          "root": result["root"], "counts": counts, "rows": result["rows"]},
+                         ensure_ascii=False))
+        return code
+    for line in lines:
+        print(line)
+    return code
+
+
 def _cmd_fold_docs(args: argparse.Namespace) -> int:
     """`fold-docs [--apply]` -> the plan (one line per spec) or the applied total."""
     project = _project(args)
@@ -1174,6 +1216,7 @@ _IMPLEMENTED_HANDLERS = {
     "import-md": _cmd_import_md,
     "sync": _cmd_sync,
     "fold-docs": _cmd_fold_docs,
+    "verify": _cmd_verify,
 }
 
 
