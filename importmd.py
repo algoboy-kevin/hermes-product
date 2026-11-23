@@ -816,6 +816,30 @@ def notes(documents: Documents) -> list[str]:
             for doc in documents.docs for token in doc.ignored]
 
 
+def _settle_prd_id(documents: Documents, project: str) -> list[str]:
+    """Give the PRD a STABLE DOC id on re-import; returns problems (nothing imported).
+
+    The PRD has no id in the files. A project that already stores a PRD document keeps
+    that id (so adding a supporting DOC file later never makes the importer insert a
+    second PRD). Otherwise the id is the next one above every id in the files AND in
+    the store (ids are never reused).
+    """
+    prd = documents.prd
+    if prd is None:
+        return []
+    stored = store.list_entities(project, "doc")
+    file_ids = {doc.id for doc in documents.docs if doc is not prd and doc.id is not None}
+    stored_prd = [doc["id"] for doc in stored if doc.get("doc_kind") == "prd"]
+    if stored_prd:
+        prd.id = stored_prd[0]
+        if prd.id in file_ids:
+            return [f"supporting: DOC{prd.id} is the stored PRD of project {project} but a"
+                    f" supporting file claims the same id"]
+        return []
+    prd.id = max([*file_ids, *(doc["id"] for doc in stored), 0]) + 1
+    return []
+
+
 def import_markdown(dir_path: Union[str, Path], project: str, *,
                     dry_run: bool = False) -> dict:
     """Import the docs directory into an EXISTING project through the S3 importer.
@@ -830,6 +854,7 @@ def import_markdown(dir_path: Union[str, Path], project: str, *,
             f" (create it with: project add {project} <name> --root DIR)")
     documents = build_documents(dir_path)
     problems = cross_check(documents)
+    problems += _settle_prd_id(documents, project)
     result: dict[str, Any] = {**documents.counts(), "problems": problems,
                               "notes": notes(documents), "dry_run": dry_run,
                               "inserted": 0, "skipped": 0, "conflicts": 0,

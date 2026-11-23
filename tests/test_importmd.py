@@ -701,3 +701,56 @@ def test_doc_summary_is_clipped_to_the_maximum(tmp_path: Path, shop: str,
     summary = doc_rows()[0]["summary"]
     assert len(summary) == 400
     assert summary.startswith("word word")
+
+
+# ------------------------------------------- a stable PRD id across re-imports (HP-10 follow-up)
+def test_reimport_keeps_the_stored_prd_id_when_a_supporting_doc_is_added(
+        tmp_path: Path, shop: str, capsys) -> None:
+    tree = docs_tree(tmp_path)
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 0, err
+    prd_before = [row["id"] for row in doc_rows() if row["kind"] == "prd"]
+    assert prd_before == [3]
+    # a new supporting document with a HIGHER id than the stored PRD
+    (tree / "supporting" / "DOC4-extra.md").write_text(
+        "# DOC4 Extra notes\n\n`kind: research | status: current | links: R1`\n\n"
+        "**Summary.** More notes.\n\nBody.\n", encoding="utf-8")
+    index = (tree / "index.md").read_text(encoding="utf-8")
+    index = index.replace("| DOC2 |", "| DOC4 | research | current | [Extra notes](supporting/DOC4-extra.md) |\n| DOC2 |", 1)
+    (tree / "index.md").write_text(index, encoding="utf-8")
+    rc, out, err = run_import(capsys, tree)
+    assert rc == 0, out + err
+    assert "0 conflicts" in out
+    prds = [row["id"] for row in doc_rows() if row["kind"] == "prd"]
+    assert prds == [3]                                   # still ONE prd, same id
+    assert sorted(row["id"] for row in doc_rows()) == [1, 2, 3, 4]
+
+
+def test_new_prd_id_is_above_the_store_and_the_files(tmp_path: Path, shop: str, capsys) -> None:
+    connection = store.connect()
+    try:
+        connection.execute("UPDATE id_counter SET next_id = 9 WHERE project = 'shop' AND kind = 'DOC'")
+        connection.execute(
+            "INSERT INTO doc(project, id, title, kind, summary, status) VALUES"
+            " ('shop', 7, 'Old', 'other', 'old doc', 'current')")
+        connection.commit()
+    finally:
+        connection.close()
+    documents = importmd.build_documents(docs_tree(tmp_path))
+    assert importmd._settle_prd_id(documents, "shop") == []
+    assert documents.prd.id == 8
+
+
+def test_stored_prd_id_claimed_by_a_supporting_file_is_a_problem(
+        tmp_path: Path, shop: str, capsys) -> None:
+    rc, out, err = run_import(capsys, docs_tree(tmp_path))
+    assert rc == 0, err
+    # now the files claim DOC3 for a supporting document while the store's DOC3 is the PRD
+    (tmp_path / "docs" / "supporting" / "DOC3-clash.md").write_text(
+        "# DOC3 Clash\n\n`kind: research | status: current | links: R1`\n\n**Summary.** x.\n", encoding="utf-8")
+    index = (tmp_path / "docs" / "index.md").read_text(encoding="utf-8")
+    index = index.replace("| DOC2 |", "| DOC3 | research | current | [Clash](supporting/DOC3-clash.md) |\n| DOC2 |", 1)
+    (tmp_path / "docs" / "index.md").write_text(index, encoding="utf-8")
+    rc, out, err = run_import(capsys, tmp_path / "docs")
+    assert rc == 1
+    assert "stored PRD" in out + err
