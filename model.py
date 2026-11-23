@@ -26,7 +26,8 @@ PREFIX = {"requirement": "R", "criterion": "A", "feature": "F", "spec": "S", "do
 KIND_BY_PREFIX = {prefix: kind for kind, prefix in PREFIX.items()}
 
 #: the kinds a DOC# may declare (S1 section 7); exactly one `prd` per project
-DOC_KINDS = ("prd", "spec", "context", "research", "design", "api", "runbook", "other")
+DOC_KINDS = ("prd", "spec", "context", "research", "design", "api", "runbook", "report",
+             "other")
 
 #: a document summary is what an agent sees by default: one or two sentences
 DOC_SUMMARY_MAX = 400

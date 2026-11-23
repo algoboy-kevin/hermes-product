@@ -62,7 +62,7 @@ def test_fresh_install_has_a_body_column_on_r_f_s_only(home: Path) -> None:
         raw.close()
 
 
-def test_v1_db_migrates_keeping_rows_and_backing_up(home: Path) -> None:
+def test_v1_db_migrates_to_latest_keeping_rows_and_backing_up(home: Path) -> None:
     path = store.db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = sqlite3.connect(str(path))
@@ -79,7 +79,7 @@ def test_v1_db_migrates_keeping_rows_and_backing_up(home: Path) -> None:
 
     migrated = sqlite3.connect(str(path))
     try:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == store.LATEST_VERSION
         row = migrated.execute("SELECT title, summary, body FROM spec").fetchone()
         assert row == ("Tracker", "One row per second.", None)
     finally:

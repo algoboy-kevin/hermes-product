@@ -2,7 +2,7 @@
 
 `draft | requirements R1,R2,R3,R9,R10,R15 | features F1,F2,F3,F5,F9`
 
-Version 0.4 (schema v2: entity bodies, section 3.1). Supersedes the 0.2 draft of the traceability data specification; section "Changes" lists why.
+Version 0.5 (schema v3: entity bodies, section 3.1; open DOC kinds). Supersedes the 0.2 draft of the traceability data specification; section "Changes" lists why.
 
 ## 1. Conventions
 
@@ -108,7 +108,7 @@ Reference material too large for the PRD or a kanban card: a design write-up, an
 
 | Field | Type | Req. | Description |
 |---|---|---|---|
-| kind | enum | Y | `prd`, `spec`, `context`, `research`, `design`, `api`, `runbook`, `other`. Exactly one `prd` per project |
+| kind | enum | Y | `prd`, `spec`, `context`, `research`, `design`, `api`, `runbook`, `report`, `other`. Exactly one `prd` per project. `report` is a run or test report; `spec` is kept for schema-v1 rows and imports (new spec text is an S# body) |
 | summary | text | Y | One or two sentences. This is what an agent sees by default |
 | body | longtext | N | Markdown stored with the project. Alternative: `body_ref` |
 | body_ref | text | N | External path or URL; the store keeps a content hash to detect drift |
@@ -143,6 +143,7 @@ One compact log: `entity_type`, `entity_id`, `change` (such as `status approved 
 | `evidence_level` on A# | "Done" differs in strength: a unit test is not a production check |
 | `paths` on F# and S#; `infra` on F# | Coverage check; plumbing features have no requirement of their own |
 | `hypothesis_ref`, `legacy` on R# | Optional link to the claim a requirement tests; honest import of existing systems |
+| `report` DOC kind; `doc.kind` validated by the model, not a CHECK (schema v3) | A run report is context, not research; the next kind must not need a table rebuild |
 | `body` on R#, F#, S# (schema v2); `show --body` | A spec's text lived in a second entity, so `add S` produced a pointer with no text; the card model (text on the entry) removes the hop. DOC narrows to context |
 | Kanban `Done` maps to `implemented`, never `verified` | `verified` must come from criteria ([S5](S5-external-links.md)) |
 

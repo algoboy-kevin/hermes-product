@@ -234,8 +234,39 @@ def _migrate_v2_entity_body(con: sqlite3.Connection) -> None:
         con.execute(f"ALTER TABLE {table} ADD COLUMN body TEXT")
 
 
+def _migrate_v3_open_doc_kinds(con: sqlite3.Connection) -> None:
+    """v3: `doc.kind` is validated by the model, not by a CHECK that needs a rebuild per kind.
+
+    SQLite cannot drop a CHECK in place, so the table is rebuilt (rows, links and ids
+    unchanged). This is what lets `report` (and any later kind) exist without another
+    migration.
+    """
+    con.execute("""
+CREATE TABLE doc_v3 (
+  project       TEXT NOT NULL REFERENCES project(slug) ON DELETE CASCADE,
+  id            INTEGER NOT NULL,
+  title         TEXT,
+  kind          TEXT,
+  summary       TEXT,
+  body_file     TEXT,
+  body_ref      TEXT,
+  body_hash     TEXT,
+  status        TEXT CHECK (status IN ('current','superseded')),
+  superseded_by INTEGER,
+  notes         TEXT,
+  updated_at    TEXT,
+  PRIMARY KEY (project, id),
+  FOREIGN KEY (project, superseded_by) REFERENCES doc (project, id)
+)""")
+    con.execute("INSERT INTO doc_v3 SELECT project, id, title, kind, summary, body_file,"
+                " body_ref, body_hash, status, superseded_by, notes, updated_at FROM doc")
+    con.execute("DROP TABLE doc")
+    con.execute("ALTER TABLE doc_v3 RENAME TO doc")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (2, "body column on requirement, feature and spec", _migrate_v2_entity_body),
+    (3, "doc.kind without a CHECK (kinds are validated by the model)", _migrate_v3_open_doc_kinds),
 ]
 
 def latest_version() -> int:
@@ -337,10 +368,19 @@ def _apply_migrations(con: sqlite3.Connection, db_file: Path, from_version: int,
     last = from_version
     for target, description, apply_migration in pending:
         try:
+            # SQLite's table-redefinition recipe: foreign keys OFF outside the
+            # transaction (the pragma is a no-op inside one), then a foreign_key_check
+            # BEFORE the commit so a migration can never leave a dangling reference.
+            con.execute("PRAGMA foreign_keys = OFF")
             con.execute("BEGIN IMMEDIATE")
             apply_migration(con)
+            violations = con.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise StoreError(f"foreign key check failed after the migration:"
+                                 f" {len(violations)} dangling reference(s)")
             con.execute(f"PRAGMA user_version = {int(target)}")
             con.execute("COMMIT")
+            con.execute("PRAGMA foreign_keys = ON")
         except Exception as exc:  # noqa: BLE001 - any failure must abort cleanly
             try:
                 con.execute("ROLLBACK")

@@ -36,7 +36,7 @@ def test_fresh_db_is_stamped_at_latest_with_every_table(con: sqlite3.Connection)
     version = con.execute("PRAGMA user_version").fetchone()[0]
     tables = {row["name"] for row in
               con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert version == store.LATEST_VERSION == 2
+    assert version == store.LATEST_VERSION
     assert SCHEMA_V1_TABLES <= tables
 
 
