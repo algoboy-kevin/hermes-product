@@ -35,6 +35,11 @@ Detail (full statement, criteria text, notes, history) is returned only on reque
 
 Every command is also available as a tool so an agent in a session can call it directly; tool results use the same compact lines.
 
+
+### Options on the writing verbs
+
+`add`, `set`, `link`, `unlink` and `import` take `--dry-run` (run the real verb on a throwaway copy of the store: same checks, ids and messages, each line prefixed `(dry run)`, nothing written) and `--json` (one object: `ok`, `exit`, `dry_run`, `ref`, `action`, `lines`; a refusal is `ok: false` with `error` and the same exit code). `fold-docs` takes `--json`. `add --if-missing` prints `<REF> exists` and writes nothing when the project already holds an entry with the same key: title for R#, S# and DOC# (case and whitespace ignored), slug (else title) for F#, parent requirement plus text for A#.
+
 ## 3. Agent guidance
 
 - The plugin registers a skill describing when to call `trace`, `next` and `lint` before reading files.

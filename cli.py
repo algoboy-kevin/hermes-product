@@ -21,11 +21,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import (code_coverage, docs_text, export, external, fold, graph, importmd, lint,
-                   model, plan, scan, store)
+    from . import (code_coverage, docs_text, dryrun, export, external, fold, graph, importmd,
+                   lint, model, plan, scan, store)
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
+    import dryrun  # type: ignore[no-redef]
     import export  # type: ignore[no-redef]
     import external  # type: ignore[no-redef]
     import fold  # type: ignore[no-redef]
@@ -92,6 +93,16 @@ def _add_project_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_write_options(parser: argparse.ArgumentParser, *, dry_run: bool = True) -> None:
+    """``--dry-run`` (the real verb against a throwaway copy) and ``--json`` for a writing verb."""
+    if dry_run:
+        parser.add_argument("--dry-run", dest="write_dry_run", action="store_true", default=False,
+                            help="Run the real verb on a throwaway copy of the store: same"
+                                 " checks and messages, nothing written")
+    parser.add_argument("--json", dest="json_out", action="store_true", default=False,
+                        help="Print one JSON object (ok, exit, ref, action, lines) instead of text")
+
+
 def register_cli(subparser: argparse.ArgumentParser) -> None:
     """Build the argparse tree for every S4 verb. Help wording follows S4 section 2."""
     subs = subparser.add_subparsers(dest="product_action", metavar="{%s}" % ",".join(_TOP_LEVEL))
@@ -149,6 +160,11 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                        help="Copy this file in as the body (R#, F#, S#, DOC#)")
     p_add.add_argument("--body-ref", dest="body_ref", default=None, metavar="REF",
                        help="An external path or URL holding the body (DOC# only)")
+    p_add.add_argument("--if-missing", dest="if_missing", action="store_true", default=False,
+                       help="Do nothing (print `<REF> exists`) when the project already has an"
+                            " entry with the same key: title (R#, S#, DOC#), slug or title (F#),"
+                            " requirement + text (A#)")
+    _add_write_options(p_add)
 
     p_set = subs.add_parser("set", help="Change a field or status (validated)")
     p_set.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
@@ -162,6 +178,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                             " mandatory dependency is still planned")
     p_set.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
                        help="Replace the body with this file (R#, F#, S#, DOC#)")
+    _add_write_options(p_set)
     _add_project_option(p_set)
     p_link = subs.add_parser("link", help="Create a relation, or add a dependency edge")
     p_link.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
@@ -171,6 +188,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                         help="The entry this one depends on (same kind)")
     p_link.add_argument("--optional", action="store_true", default=False,
                         help="A feature dependency that does not block (F# only)")
+    _add_write_options(p_link)
     _add_project_option(p_link)
     p_unlink = subs.add_parser("unlink", help="Remove a relation, or remove a dependency edge")
     p_unlink.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
@@ -180,6 +198,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                           help="The dependency to remove (same kind)")
     p_unlink.add_argument("--optional", action="store_true", default=False,
                           help=argparse.SUPPRESS)
+    _add_write_options(p_unlink)
     _add_project_option(p_unlink)
 
     p_show = subs.add_parser("show", help="Full detail for one entry")
@@ -256,6 +275,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_import.add_argument("--as", dest="as_slug", default=None, metavar="SLUG",
                           help="Create the project under this slug instead of the"
                                " one in project.yaml")
+    _add_write_options(p_import)
 
     p_fold = subs.add_parser(
         "fold-docs",
@@ -265,6 +285,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_fold.add_argument("--apply", dest="apply", action="store_true", default=False,
                         help="Do it: copy the text into the S# body, then delete the"
                              " DOC row, links and body file (one transaction)")
+    _add_write_options(p_fold, dry_run=False)
     _add_project_option(p_fold)
 
     p_import_md = subs.add_parser(
@@ -513,6 +534,11 @@ def _cmd_add(args: argparse.Namespace) -> int:
             if value is not None:
                 fields[name] = value
         fields["kind"] = args.doc_kind
+        if args.if_missing:
+            found = store.find_existing(project, "doc", fields)
+            if found is not None:
+                print(f"{model.format_ref('doc', found)} exists")
+                return EXIT_OK
         created = store.create_entity(project, "doc", fields)
         print(f"{created['ref']} created")
         return EXIT_OK
@@ -529,6 +555,11 @@ def _cmd_add(args: argparse.Namespace) -> int:
         value = getattr(args, name, None)
         if value is not None:
             fields[name] = value
+    if args.if_missing:
+        found = store.find_existing(project, kind, fields)
+        if found is not None:
+            print(f"{model.format_ref(kind, found)} exists")
+            return EXIT_OK
     created = store.create_entity(project, kind, fields)
     print(f"{created['ref']} created")
     return EXIT_OK
@@ -1158,9 +1189,18 @@ def product_command(args: argparse.Namespace) -> int:
         return EXIT_OK
     handler = _IMPLEMENTED_HANDLERS.get(path)
     if handler is not None:
+        errors = (store.StoreError, model.ValidationError)
+        dry = bool(getattr(args, "write_dry_run", False))
+        as_json = bool(getattr(args, "json_out", False))
         try:
+            if dry or as_json:
+                return dryrun.run_with_options(handler, args, dry_run=dry, as_json=as_json,
+                                               errors=errors, exit_error=EXIT_ERROR)
             return handler(args)
-        except (store.StoreError, model.ValidationError) as exc:
+        except errors as exc:
+            print(exc, file=sys.stderr)
+            return EXIT_ERROR
+        except dryrun._Refused as exc:
             print(exc, file=sys.stderr)
             return EXIT_ERROR
     card = VERB_CARDS.get(path)

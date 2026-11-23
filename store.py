@@ -738,6 +738,52 @@ def _insert_row(con: sqlite3.Connection, project: str, kind: str, entity_id: int
     )
 
 
+def find_existing(project: str, kind: str, fields: dict,
+                  con: Optional[sqlite3.Connection] = None) -> Optional[int]:
+    """The id of the entry that ``add --if-missing`` would duplicate, or None.
+
+    The natural key (DOC5 section 2.4): F# by ``slug`` when given, else title; A# by
+    parent requirement + text; R#, S# and DOC# by title. Titles and text compare
+    case-insensitively with whitespace collapsed. A retired entry still counts: re-adding
+    a dropped requirement is not what an idempotent rerun means.
+    """
+    kind = model.kind_for(kind)
+
+    def norm(value: Any) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
+    own = con is None
+    con = con or connect()
+    try:
+        if not project_exists(project, con):
+            raise StoreError(f"project {project!r} does not exist")
+        table = ENTITY_TABLE[kind]
+        if kind == "feature" and fields.get("slug"):
+            row = con.execute("SELECT id FROM feature WHERE project = ? AND slug = ?",
+                              (project, str(fields["slug"]))).fetchone()
+            return row["id"] if row else None
+        if kind == "criterion":
+            parent = model._as_ref_int("requirement_id", fields.get("requirement_id"))
+            wanted = norm(fields.get("text"))
+            for row in con.execute(
+                    "SELECT id, text FROM criterion WHERE project = ? AND requirement_id = ?",
+                    (project, parent)):
+                if norm(row["text"]) == wanted:
+                    return row["id"]
+            return None
+        wanted = norm(fields.get("title"))
+        if not wanted:
+            return None
+        for row in con.execute(f"SELECT id, title FROM {table} WHERE project = ? ORDER BY id",
+                               (project,)):
+            if norm(row["title"]) == wanted:
+                return row["id"]
+        return None
+    finally:
+        if own:
+            con.close()
+
+
 def create_entity(project: str, kind: str, fields: dict,
                   con: Optional[sqlite3.Connection] = None) -> dict:
     """Create an R#/A#/F#/S# row: validate, then allocate the id and insert atomically.
