@@ -36,8 +36,16 @@ R3  approved  must  mvp  title  F:..  S:..  A:2/4
 
 ref, status, priority/layer, phase, title, then links (`F:`/`S:`/`R:`) and
 criteria progress (`A:passed/total`). `show <REF>` prints full detail (statement,
-criteria, notes, history). A body is read separately, always bounded:
-`doc read DOCn --section H --max-chars N` (reports truncation).
+criteria, notes, history). Text is read separately, always bounded: an R#/F#/S#
+body with `show <REF> --body --section H --max-chars N`, a DOC with
+`doc read DOCn ...` (both report truncation).
+
+## Where text goes
+
+- Text that defines ONE entry (a spec's contract, a feature's boundary) is that
+  entry's body: `add S ... --body-file F`, `set S3 --body-file F`.
+- Text about the project or evidence (PRD, UX review, run report) is a DOC.
+- A# has no body; a refused `--body` is an error, never a silent drop.
 
 ## Rules
 

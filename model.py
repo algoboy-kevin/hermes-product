@@ -31,6 +31,10 @@ DOC_KINDS = ("prd", "spec", "context", "research", "design", "api", "runbook", "
 #: a document summary is what an agent sees by default: one or two sentences
 DOC_SUMMARY_MAX = 400
 
+#: the kinds whose row carries a `body` column: the full text that DEFINES the entry
+#: (S1 section 3.1). A# has none (one sentence plus evidence); DOC# keeps its own body file.
+BODY_KINDS = ("requirement", "feature", "spec")
+
 STATUSES: dict[str, tuple[str, ...]] = {
     "requirement": ("draft", "approved", "in_progress", "done", "dropped"),
     "criterion": ("not_run", "passed", "failed", "waived"),
@@ -156,6 +160,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "legacy": {"type": "bool"},
         "prd_ref": {"type": "text"},
         "notes": {"type": "text"},
+        "body": {"type": "body"},
     },
     "criterion": {
         "requirement_id": {"type": "ref", "target": "requirement"},
@@ -181,6 +186,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "blocked": {"type": "bool"},
         "blocked_reason": {"type": "text"},
         "notes": {"type": "text"},
+        "body": {"type": "body"},
     },
     "spec": {
         "title": {"type": "title"},
@@ -192,6 +198,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "blocked": {"type": "bool"},
         "blocked_reason": {"type": "text"},
         "notes": {"type": "text"},
+        "body": {"type": "body"},
     },
     "doc": {
         "title": {"type": "title"},
@@ -207,10 +214,11 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
 #: what `add <KIND>` accepts (never status: the initial state is fixed)
 ADD_FIELDS: dict[str, tuple[str, ...]] = {
     "requirement": ("title", "statement", "rationale", "priority", "phase", "notes",
-                    "hypothesis_ref", "legacy", "prd_ref"),
+                    "hypothesis_ref", "legacy", "prd_ref", "body"),
     "criterion": ("requirement_id", "text", "notes"),
-    "feature": ("title", "layer", "slug", "phase", "description", "infra", "paths", "notes"),
-    "spec": ("title", "summary", "paths", "notes"),
+    "feature": ("title", "layer", "slug", "phase", "description", "infra", "paths", "notes",
+                "body"),
+    "spec": ("title", "summary", "paths", "notes", "body"),
     "doc": ("title", "kind", "summary", "notes", "body_ref"),
 }
 
@@ -218,12 +226,12 @@ ADD_FIELDS: dict[str, tuple[str, ...]] = {
 SET_FIELDS: dict[str, tuple[str, ...]] = {
     "requirement": ("title", "statement", "rationale", "priority", "phase", "status",
                     "status_reason", "superseded_by", "blocked", "blocked_reason",
-                    "hypothesis_ref", "legacy", "prd_ref", "notes"),
+                    "hypothesis_ref", "legacy", "prd_ref", "notes", "body"),
     "criterion": ("text", "status", "evidence", "evidence_level", "notes"),
     "feature": ("slug", "title", "layer", "status", "status_reason", "phase",
-                "description", "infra", "paths", "blocked", "blocked_reason", "notes"),
+                "description", "infra", "paths", "blocked", "blocked_reason", "notes", "body"),
     "spec": ("title", "summary", "status", "status_reason", "superseded_by", "paths",
-             "blocked", "blocked_reason", "notes"),
+             "blocked", "blocked_reason", "notes", "body"),
     "doc": ("title", "kind", "summary", "status", "superseded_by", "notes", "body_ref"),
 }
 
@@ -274,6 +282,13 @@ def validate_field(kind: str, name: str, value: Any) -> Any:
                     f"title must be 3-80 characters, got {len(cleaned)}"
                 )
         return cleaned
+
+    if kind_of_rule == "body":
+        # the full text, stored exactly as given (no strip: a Markdown body keeps its
+        # trailing newline); a blank body means "no body" and is stored as NULL
+        if not isinstance(value, str):
+            raise ValidationError(f"{name} must be text, got {value!r}")
+        return value if value.strip() else None
 
     if kind_of_rule == _ENUM:
         allowed = rule["values"]

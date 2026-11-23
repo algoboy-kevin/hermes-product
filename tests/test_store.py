@@ -32,11 +32,11 @@ def con(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
 
 
 # ---------------------------------------------------------------- fresh install
-def test_fresh_db_is_stamped_v1_with_every_table(con: sqlite3.Connection) -> None:
+def test_fresh_db_is_stamped_at_latest_with_every_table(con: sqlite3.Connection) -> None:
     version = con.execute("PRAGMA user_version").fetchone()[0]
     tables = {row["name"] for row in
               con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert version == 1 == store.LATEST_VERSION
+    assert version == store.LATEST_VERSION == 2
     assert SCHEMA_V1_TABLES <= tables
 
 
@@ -47,7 +47,7 @@ def test_reconnect_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     store.connect().close()
     con = sqlite3.connect(str(path))
     try:
-        assert con.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert con.execute("PRAGMA user_version").fetchone()[0] == store.LATEST_VERSION
     finally:
         con.close()
     assert not list(path.parent.glob("*.bak*"))

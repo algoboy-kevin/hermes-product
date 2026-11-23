@@ -48,7 +48,7 @@ PLUGIN_NAME = "product_plugin_under_test"
 
 TOOL_NAMES = ["product_show", "product_trace", "product_next", "product_lint", "product_list"]
 TOOL_PROPERTIES = {
-    "product_show": {"ref", "project"},
+    "product_show": {"ref", "body", "section", "max_chars", "project"},
     "product_trace": {"ref", "depth", "project"},
     "product_next": {"limit", "project"},
     "product_lint": {"project"},

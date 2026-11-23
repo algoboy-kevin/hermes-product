@@ -169,7 +169,7 @@ def test_info_on_an_empty_home_creates_nothing(home: Path) -> None:
 
 def test_info_reports_the_schema_version(home: Path, seeded: str) -> None:
     payload = _client().get("/info").json()
-    assert payload["schema"] == store.schema_info()["version"] == 1
+    assert payload["schema"] == store.schema_info()["version"] == store.LATEST_VERSION
     assert payload["db"] == str(_db())
 
 
@@ -540,3 +540,14 @@ def test_gets_on_a_missing_db_create_no_file(home: Path) -> None:
     assert client.get("/project/shop/graph").status_code == 404
     assert client.get("/info").json()["schema"] == 0
     assert not (home / "hermes-home").exists()
+
+
+def test_entry_payload_never_carries_a_body_text(home: Path, seeded: str) -> None:
+    """Schema v2 bodies stay out of the page's JSON until the page asks for them."""
+    store.update_entity(seeded, "S1", {"body": "SECRET-BODY-TEXT " * 50})
+    response = _client().get(f"/project/{seeded}/entry/S1")
+    assert response.status_code == 200
+    assert "SECRET-BODY-TEXT" not in response.text
+    assert "body" not in response.json()["fields"]
+    listing = _client().get(f"/project/{seeded}/entries", params={"kind": "S"})
+    assert "SECRET-BODY-TEXT" not in listing.text

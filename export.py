@@ -78,14 +78,14 @@ ENTITY_FILES = (
 EXPORT_COLUMNS: dict[str, tuple[str, ...]] = {
     "requirement": ("id", "title", "statement", "rationale", "priority", "phase", "status",
                     "status_reason", "superseded_by", "blocked", "blocked_reason",
-                    "hypothesis_ref", "legacy", "prd_ref", "notes", "updated_at"),
+                    "hypothesis_ref", "legacy", "prd_ref", "body", "notes", "updated_at"),
     "criterion": ("id", "requirement_id", "text", "status", "evidence", "evidence_level",
                   "notes", "updated_at"),
     "feature": ("id", "slug", "title", "layer", "status", "status_reason", "phase",
-                "description", "infra", "paths", "blocked", "blocked_reason", "notes",
+                "description", "infra", "paths", "blocked", "blocked_reason", "body", "notes",
                 "updated_at"),
     "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
-             "blocked", "blocked_reason", "notes", "updated_at"),
+             "blocked", "blocked_reason", "body", "notes", "updated_at"),
     "doc": ("id", "title", "kind", "summary", "body", "body_ref", "body_hash", "status",
             "superseded_by", "notes", "updated_at"),
 }

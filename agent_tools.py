@@ -43,12 +43,29 @@ PRODUCT_SHOW_SCHEMA = {
     "name": "product_show",
     "description": (
         "Full detail for one entry (fields, links, child criteria, docs, history) "
-        "— the same lines as `hermes product show`. Use product_trace for "
-        "everything connected to the entry, product_list for one line per entry."
+        "— the same lines as `hermes product show`. An R#/F#/S# with a body prints "
+        "one `body: N chars` line; pass body=true to read the text (bounded, with "
+        "an optional section). Use product_trace for everything connected to the "
+        "entry, product_list for one line per entry."
     ),
     "parameters": {
         "type": "object",
-        "properties": {"ref": _REF_PROP, "project": _PROJECT_PROP},
+        "properties": {
+            "ref": _REF_PROP,
+            "body": {
+                "type": "boolean",
+                "description": "Also print the body text of an R#, F#, S# or DOC# (bounded).",
+            },
+            "section": {
+                "type": "string",
+                "description": "With body=true: only this Markdown section (heading text).",
+            },
+            "max_chars": {
+                "type": "integer",
+                "description": "With body=true: at most N characters (1..100000, default 4000).",
+            },
+            "project": _PROJECT_PROP,
+        },
         "required": ["ref"],
     },
 }
@@ -176,7 +193,14 @@ def _project_flag(args: dict[str, Any]) -> list[str]:
 
 
 def _argv_for_show(args: dict[str, Any]) -> list[str]:
-    return ["show", str(args.get("ref") or "")] + _project_flag(args)
+    argv = ["show", str(args.get("ref") or "")]
+    if args.get("body"):
+        argv.append("--body")
+    if args.get("section"):
+        argv += ["--section", str(args["section"])]
+    if args.get("max_chars") is not None:
+        argv += ["--max-chars", str(args["max_chars"])]
+    return argv + _project_flag(args)
 
 
 def _argv_for_trace(args: dict[str, Any]) -> list[str]:

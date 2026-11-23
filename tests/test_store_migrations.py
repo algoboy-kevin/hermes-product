@@ -75,9 +75,9 @@ def _make_v1(path: Path) -> None:
 
 # ---------------------------------------------------------------------- fresh install
 
-def test_empty_db_fresh_install_is_stamped_v1_without_backup(db: Path) -> None:
+def test_empty_db_fresh_install_is_stamped_latest_without_backup(db: Path) -> None:
     store.connect().close()
-    assert _user_version(db) == 1 == store.LATEST_VERSION
+    assert _user_version(db) == store.LATEST_VERSION
     tables = {row[0] for row in
               _raw(db).execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"project", "requirement", "history"} <= tables
@@ -112,7 +112,7 @@ def test_newer_db_is_refused_byte_identical(db: Path) -> None:
         store.connect()
     message = str(excinfo.value)
     assert "schema v99" in message
-    assert "up to v1" in message
+    assert f"up to v{store.LATEST_VERSION}" in message
     assert "upgrade the plugin" in message
     assert _sha256(db) == before                          # version gate before WAL
     assert _user_version(db) == 99
@@ -206,7 +206,8 @@ def test_second_connect_makes_no_second_backup(db: Path, monkeypatch: pytest.Mon
 # ------------------------------------------------------------------------ schema_info
 
 def test_schema_info_reports_version_and_latest(db: Path) -> None:
-    assert store.schema_info() == {"version": 0, "latest": 1, "path": str(db)}  # no db yet
+    assert store.schema_info() == {"version": 0, "latest": store.LATEST_VERSION,
+                                   "path": str(db)}                       # no db yet
     store.connect().close()
     info = store.schema_info()
     assert info["version"] == store.LATEST_VERSION == info["latest"]

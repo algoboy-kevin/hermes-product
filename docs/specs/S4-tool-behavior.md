@@ -13,14 +13,14 @@ S7  approved        Use PaymentIntents with 3DS     R:3                F:stripe
 DOC4 design  current  Stripe webhook flow           links F7,S7
 ```
 
-Detail (full statement, criteria text, notes, history) is returned only on request: `show R3`. Documents appear as one line with their summary; the body is read separately.
+Detail (full statement, criteria text, notes, history) is returned only on request: `show R3`. Documents appear as one line with their summary; the body is read separately. An R#, F# or S# with a body shows one `body: N chars` line; `show REF --body [--section H] [--max-chars N]` reads it, bounded, with a truncation trailer (S1 section 3.1). `list`, `trace` and `next` never print a body.
 
 ## 2. Commands
 
 | Command | Purpose |
 |---|---|
 | project add / list / use | Create a project, list projects, pick one. Without `--project`, the project whose `root` contains the working directory is used |
-| add | Create an R#, A#, F#, S# or DOC# |
+| add | Create an R#, A#, F#, S# or DOC#. `--body` / `--body-file` store the defining text on an R#, F# or S# (or the body of a DOC#); on an A# they are refused, never dropped |
 | set | Change a field or status (validated) |
 | link / unlink | Create or remove a relation, or add a dependency edge |
 | show | Full detail for one entry |

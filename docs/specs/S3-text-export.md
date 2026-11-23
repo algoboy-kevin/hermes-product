@@ -25,4 +25,5 @@ Goal: the whole project as plain text that diffs cleanly in git, and a lossless 
 - `updated_at` is exported; export time is not.
 - Import into an empty store reproduces the store exactly. Import into a non-empty store merges by ID, reports conflicts and never overwrites an existing entry.
 - A DOC with `body_ref` exports the reference and hash only, not the external file.
+- An R#, F# or S# `body` (schema v2, S1 section 3.1) is a `body` key in that entry's own YAML row, written as a literal block, and is omitted when empty. An export without `body` keys still imports (NULL); a body that is not text is rejected naming file and entry; on a merge into an existing project a differing body is a conflict like any other field.
 - The export is the copy that is committed to git, next to the PRD. The SQLite file is a cache that can be rebuilt from it.

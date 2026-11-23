@@ -228,7 +228,15 @@ CREATE TABLE IF NOT EXISTS history (
 
 # ---------------------------------------------------------------- schema versioning
 
-MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = []
+def _migrate_v2_entity_body(con: sqlite3.Connection) -> None:
+    """v2: R#, F# and S# rows carry their defining text in a nullable `body` column."""
+    for table in ("requirement", "feature", "spec"):
+        con.execute(f"ALTER TABLE {table} ADD COLUMN body TEXT")
+
+
+MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
+    (2, "body column on requirement, feature and spec", _migrate_v2_entity_body),
+]
 
 def latest_version() -> int:
     """Newest schema version this build understands: baseline v1, or the last migration."""
@@ -666,6 +674,7 @@ def create_entity(project: str, kind: str, fields: dict,
         if kind == "doc":
             return _create_doc(con, project, dict(fields))
         values = dict(fields)
+        _fold_body_options(kind, values)
         if kind == "criterion":
             values["requirement_id"] = _resolve_link(
                 con, project, "requirement", values.get("requirement_id"), "requirement_id"
@@ -769,6 +778,29 @@ def _extract_body_options(fields: dict) -> tuple[Optional[str], Optional[str]]:
     elif body is not None:
         text = str(body)
     return text, (str(body_ref) if body_ref else None)
+
+
+def _fold_body_options(kind: str, values: dict) -> None:
+    """Turn the CLI-only ``body_file`` / ``body`` / ``body_ref`` of an ``add`` into ``body``.
+
+    R#, F# and S# store the text on the row. A# has no body, and ``--body-ref`` is a
+    DOC# option: each is REFUSED, never dropped (an ``add S --body-file`` that said
+    "created" and kept nothing was the silent-loss defect of the first adoption).
+    """
+    text, body_ref = _extract_body_options(values)
+    if body_ref is not None:
+        raise model.ValidationError(
+            f"--body-ref is only for DOC#; {model.PREFIX[kind]}# stores its text with"
+            " --body or --body-file"
+        )
+    if text is None:
+        return
+    if kind not in model.BODY_KINDS:
+        raise model.ValidationError(
+            f"{model.PREFIX[kind]}# has no body (a criterion is one sentence plus evidence;"
+            " put the context on its requirement)"
+        )
+    values["body"] = text
 
 
 def _check_single_prd(con: sqlite3.Connection, project: str,
@@ -985,9 +1017,28 @@ def _children_of(con: sqlite3.Connection, project: str, kind: str,
     return [dict(row) for row in rows]
 
 
-def get_entity(project: str, ref: str, *,
+def with_body_size(row: dict, *, keep: bool = False) -> dict:
+    """An R#/F#/S# row with its ``body`` text swapped for ``body_chars`` (0: no body).
+
+    Retrieval stays cheap (R5): only ``show --body`` asks for the text (``keep``).
+    A row of a kind without a body column comes back unchanged.
+    """
+    if "body" not in row:
+        return row
+    out = dict(row)
+    text = out.get("body")
+    out["body_chars"] = len(text) if text else 0
+    if not keep:
+        out.pop("body")
+    return out
+
+
+def get_entity(project: str, ref: str, *, with_body: bool = False,
                con: Optional[sqlite3.Connection] = None) -> dict:
-    """One entry: raw row, link ids, child records and its last 10 history rows."""
+    """One entry: row, link ids, child records and its last 10 history rows.
+
+    An R#/F#/S# row carries ``body_chars``; the ``body`` text only when ``with_body``.
+    """
     own = con is None
     con = con or connect()
     try:
@@ -998,7 +1049,7 @@ def get_entity(project: str, ref: str, *,
             "kind": kind,
             "id": entity_id,
             "ref": model.format_ref(kind, entity_id),
-            "row": row,
+            "row": with_body_size(row, keep=with_body),
             "links": links_of(con, project, kind, entity_id),
             "children": _children_of(con, project, kind, entity_id),
             "docs": docs_of(con, project, kind, entity_id),
@@ -1029,7 +1080,7 @@ def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[
                 params.append(status)
             sql += " ORDER BY id"
             for row in con.execute(sql, tuple(params)):
-                item = dict(row)
+                item = with_body_size(dict(row))
                 if one == "doc":
                     # the row's own `kind` (prd/design/...) is kept under another name
                     item["doc_kind"] = item.get("kind")
@@ -1162,8 +1213,8 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
     on an approved-or-later requirement requires ``reason``. ``override_reason``
     only overrides the feature planned -> in_progress dependency check: when that
     check is the one in play it becomes the status history row's reason, and it is
-    ignored everywhere else. ``body_source`` (a path) replaces a DOC body, logs
-    ``body changed`` and is refused for every other kind.
+    ignored everywhere else. ``body_source`` (a path) replaces a DOC body or an
+    R#/F#/S# ``body``, logs ``body changed`` and is refused for A#.
     """
     own = con is None
     con = con or connect()
@@ -1196,12 +1247,23 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
                 _check_single_prd(con, project, exclude_id=entity_id)
             if "body_ref" in values:
                 values["body_hash"] = _body_hash(values["body_ref"])
-        body_text: Optional[str] = None
+        body_text: Optional[str] = None           # DOC#: the body FILE is rewritten
+        row_body_changed = False                  # R#/F#/S#: the `body` column changed
         if body_source is not None:
-            if kind != "doc":
-                raise model.ValidationError("--body-file only replaces a DOC# body")
-            body_text = read_body_source(body_source)
-            values["body_file"] = doc_body_relative(entity_id)
+            if kind == "doc":
+                body_text = read_body_source(body_source)
+                values["body_file"] = doc_body_relative(entity_id)
+            elif kind in model.BODY_KINDS:
+                if "body" in changes:
+                    raise model.ValidationError("pass either body=... or --body-file, not both")
+                values["body"] = model.validate_field(kind, "body", read_body_source(body_source))
+            else:
+                raise model.ValidationError(
+                    f"{model.PREFIX[kind]}# has no body (a criterion is one sentence plus"
+                    " evidence; put the context on its requirement)"
+                )
+        if kind in model.BODY_KINDS and "body" in values:
+            row_body_changed = values["body"] != row.get("body")
 
         merged = {**row, **values}
         model.check_blocked(merged)
@@ -1235,7 +1297,7 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
             events.append((f"status {status_change[0]} -> {status_change[1]}", status_reason))
         if statement_changed:
             events.append(("statement changed", clean_reason))
-        if body_text is not None:
+        if body_text is not None or row_body_changed:
             events.append(("body changed", clean_reason))
 
         with con:
@@ -1252,14 +1314,16 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
                 )
             if body_text is not None:
                 _write_doc_body(project, entity_id, body_text)
-        changed = list(changes) + (["body"] if body_text is not None else [])
+        changed = list(changes)
+        if "body" not in changed and (body_text is not None or "body" in values):
+            changed.append("body")
         return {
             "kind": kind,
             "id": entity_id,
             "ref": model.format_ref(kind, entity_id),
             "changed": changed,
             "status_change": status_change,
-            "row": _select_row(con, project, kind, entity_id),
+            "row": with_body_size(_select_row(con, project, kind, entity_id)),
         }
     finally:
         if own:

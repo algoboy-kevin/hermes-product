@@ -135,11 +135,12 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_add.add_argument("--kind", dest="doc_kind", default=None, metavar="KIND",
                        help="prd|spec|context|research|design|api|runbook|other (DOC#)")
     p_add.add_argument("--body", default=None,
-                       help="The document text, stored with the project (DOC#)")
+                       help="The full text that defines the entry (R#, F#, S#), or the"
+                            " document text (DOC#); never A#")
     p_add.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
-                       help="Copy this file in as the document body (DOC#)")
+                       help="Copy this file in as the body (R#, F#, S#, DOC#)")
     p_add.add_argument("--body-ref", dest="body_ref", default=None, metavar="REF",
-                       help="An external path or URL holding the body (DOC#)")
+                       help="An external path or URL holding the body (DOC# only)")
 
     p_set = subs.add_parser("set", help="Change a field or status (validated)")
     p_set.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
@@ -152,7 +153,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                        help="Record the reason a feature starts in_progress while a"
                             " mandatory dependency is still planned")
     p_set.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
-                       help="Replace a DOC body with this file (DOC#)")
+                       help="Replace the body with this file (R#, F#, S#, DOC#)")
     _add_project_option(p_set)
     p_link = subs.add_parser("link", help="Create a relation, or add a dependency edge")
     p_link.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
@@ -175,6 +176,12 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
 
     p_show = subs.add_parser("show", help="Full detail for one entry")
     p_show.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or F:slug")
+    p_show.add_argument("--body", dest="show_body", action="store_true", default=False,
+                        help="Also print the body text (R#, F#, S#, DOC#), bounded")
+    p_show.add_argument("--section", default=None, metavar="HEADING",
+                        help="With --body: only this section (matched on the heading text)")
+    p_show.add_argument("--max-chars", dest="max_chars", type=int, default=4000, metavar="N",
+                        help="With --body: at most N characters (1..100000, default 4000)")
     _add_project_option(p_show)
 
     p_list = subs.add_parser("list", help="One line per item by default")
@@ -487,6 +494,10 @@ def _cmd_add(args: argparse.Namespace) -> int:
                 f"--{flag.replace('_', '-')} is not a field of add {model.PREFIX[kind]}"
             )
         fields[field] = value
+    for name in ("body_file", "body", "body_ref"):     # refused by the store where unsupported
+        value = getattr(args, name, None)
+        if value is not None:
+            fields[name] = value
     created = store.create_entity(project, kind, fields)
     print(f"{created['ref']} created")
     return EXIT_OK
@@ -537,7 +548,7 @@ def _cmd_set(args: argparse.Namespace) -> int:
     project = _project(args)
     if not args.pairs and args.body_file is None:
         raise model.ValidationError(
-            "set needs key=value pairs, or --body-file to replace a DOC# body"
+            "set needs key=value pairs, or --body-file to replace a body"
         )
     changes: dict[str, str] = {}
     for pair in args.pairs:
@@ -569,8 +580,14 @@ def _cmd_show(args: argparse.Namespace) -> int:
     linked entry as its compact line.
     """
     project = _project(args)
-    entry = store.get_entity(project, args.ref)
+    entry = store.get_entity(project, args.ref, with_body=bool(args.show_body))
     kind, row = entry["kind"], entry["row"]
+    if args.show_body and kind == "criterion":
+        raise model.ValidationError(
+            f"{entry['ref']} has no body (a criterion is one sentence plus evidence)"
+        )
+    if not args.show_body and (args.section is not None or args.max_chars != 4000):
+        raise model.ValidationError("--section and --max-chars only apply with --body")
     for field in SHOW_ORDER[kind]:
         line = _show_line(kind, field, row.get(field))
         if line is not None:
@@ -579,7 +596,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
         print(_doc_body_line(project, row))
         for item in entry["doc_links"]:
             print(_render_item(item))
+        if args.show_body:
+            _print_body(entry, _doc_text(project, row), args)
         return EXIT_OK
+    if kind in model.BODY_KINDS and row.get("body_chars"):
+        print(f"body: {row['body_chars']} chars (show {entry['ref']} --body)")
     tokens = _link_tokens(kind, entry["links"])
     if tokens:
         print(f"links: {SEP.join(tokens)}")
@@ -600,7 +621,35 @@ def _cmd_show(args: argparse.Namespace) -> int:
         if event["reason"]:
             line += f"{SEP}[{event['reason']}]"
         print(line)
+    if args.show_body:
+        _print_body(entry, row.get("body") or "", args)
     return EXIT_OK
+
+
+def _print_body(entry: dict, text: str, args: argparse.Namespace) -> None:
+    """The ``show --body`` tail: bounded text (optionally one section) + a truncation trailer."""
+    limit = args.max_chars
+    if not 1 <= limit <= 100000:
+        raise model.ValidationError(f"--max-chars must be 1..100000, got {limit}")
+    if not text:
+        print("--- body: none ---")
+        return
+    if args.section is not None:
+        found = docs_text.section(text, args.section)
+        if found is None:
+            names = [name for _level, name, _start, _end in docs_text.headings(text)][:20]
+            listed = ", ".join(names) if names else "no headings"
+            raise model.ValidationError(
+                f"no section {args.section!r} in {entry['ref']} (headings: {listed})"
+            )
+        text = found
+    piece, total, truncated = docs_text.bounded(text, limit)
+    print("--- body ---")
+    sys.stdout.write(piece)
+    if not piece.endswith("\n"):
+        sys.stdout.write("\n")
+    if truncated:
+        print(f"[truncated: showed {len(piece)} of {total} chars]")
 
 
 def _doc_body_line(project: str, row: dict) -> str:
