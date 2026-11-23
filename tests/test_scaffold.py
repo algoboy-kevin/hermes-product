@@ -59,6 +59,8 @@ EXPECTED_VERB_CARDS = {
     "verify": "HP-18",
     # HP-19: bring an existing repository's Markdown in without a hand-written importer
     "adopt": "HP-19",
+    # HP-14: a batch of add / set / link / unlink in one process, rehearsed then written
+    "apply": "HP-14",
 }
 
 # The command table of docs/specs/S4-tool-behavior.md section 2, transcribed:

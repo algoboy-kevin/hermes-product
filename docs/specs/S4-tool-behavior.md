@@ -34,13 +34,16 @@ Detail (full statement, criteria text, notes, history) is returned only on reque
 | doc read | Read a DOC body: `doc read DOC4 --section "Retries" --max-chars 4000`; always bounded, reports truncation |
 | scan-prd | Index bracketed references in the PRD and DOC bodies |
 | export / import | See [S3](S3-text-export.md) |
+| apply | Run a whole batch of `add` / `set` / `link` / `unlink` from one YAML or JSON plan file in ONE process, instead of one process per operation. `plan: PLAN --project SLUG`; the project is `--project`, else the plan's `project`, else the usual resolution, and a `--project` that differs from the plan's `project` is refused |
+
+`apply` plan format: top level `project: <slug>` (optional) and `ops: [...]`; each op is a mapping with exactly one of `add`, `set`, `link`, `unlink`. `add` takes `type` (R/A/F/S/DOC) plus the `add` flag names with underscores, `as` (an alias) and `if_missing` (default true, so a rerun is idempotent); a relative `body_file` is relative to the plan file. `set` takes `ref` plus field changes and the usual `reason` / `override_reason` / `body_file`. `link` / `unlink` take `{a, b}` or `{a, needs, optional}`. `$alias` in any ref position names an EARLIER `add ... as:`, bound to the created row or, with `if_missing`, to the existing one. The batch is validated statically, then REHEARSED on a throwaway copy of the store, then written only after the db is backed up with SQLite's backup API to `<product db>.bak-apply-<UTC stamp>`; the first bad operation refuses the whole batch (exit 1, `op <n>` named) with nothing written. The output is one `<REF> created` / `<REF> exists` line per add, one `apply <project>: <N> ops: ...` summary line, and a `backup: <path>` line when the live run happened.
 
 Every command is also available as a tool so an agent in a session can call it directly; tool results use the same compact lines.
 
 
 ### Options on the writing verbs
 
-`add`, `set`, `link`, `unlink` and `import` take `--dry-run` (run the real verb on a throwaway copy of the store: same checks, ids and messages, each line prefixed `(dry run)`, nothing written) and `--json` (one object: `ok`, `exit`, `dry_run`, `ref`, `action`, `lines`; a refusal is `ok: false` with `error` and the same exit code). `fold-docs` takes `--json`. `add --if-missing` prints `<REF> exists` and writes nothing when the project already holds an entry with the same key: title for R#, S# and DOC# (case and whitespace ignored), slug (else title) for F#, parent requirement plus text for A#.
+`add`, `set`, `link`, `unlink`, `apply` and `import` take `--dry-run` (run the real verb on a throwaway copy of the store: same checks, ids and messages, each line prefixed `(dry run)`, nothing written) and `--json` (one object: `ok`, `exit`, `dry_run`, `ref`, `action`, `lines`; a refusal is `ok: false` with `error` and the same exit code). `fold-docs` takes `--json`. `add --if-missing` prints `<REF> exists` and writes nothing when the project already holds an entry with the same key: title for R#, S# and DOC# (case and whitespace ignored), slug (else title) for F#, parent requirement plus text for A#.
 
 ## 3. Agent guidance
 

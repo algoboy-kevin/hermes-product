@@ -16,16 +16,19 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import adopt
+    from . import adopt, apply_plan
     from . import (code_coverage, docs_text, dryrun, export, external, fold, graph, importmd,
                    lint, model, plan, scan, store, verify)
 except ImportError:  # top-level module (test suite)
     import adopt  # type: ignore[no-redef]
+    import apply_plan  # type: ignore[no-redef]
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
     import dryrun  # type: ignore[no-redef]
@@ -71,6 +74,7 @@ VERB_CARDS: dict[str, str] = {
     "import-md": "HP-10",
     "sync": "HP-12",
     "fold-docs": "HP-16",
+    "apply": "HP-14",
 }
 
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
@@ -78,10 +82,11 @@ _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 # Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
 # HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
 # HP-6: trace and next; HP-7: lint; HP-8: scan-prd; HP-10: import-md; HP-12: sync;
-# HP-16: fold-docs).
+# HP-14: apply; HP-16: fold-docs).
 IMPLEMENTED = {"project add", "project list", "project use", "project set", "add", "set", "show", "list",
                "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
-               "lint", "scan-prd", "import-md", "sync", "fold-docs", "verify", "adopt"}
+               "lint", "scan-prd", "import-md", "sync", "fold-docs", "verify", "adopt",
+               "apply"}
 
 SEP = "  "
 
@@ -306,6 +311,16 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_adopt.add_argument("--json", dest="adopt_json", action="store_true", default=False,
                          help="Print one JSON object (counts and one entry per file)")
     _add_project_option(p_adopt)
+
+    p_apply = subs.add_parser(
+        "apply",
+        help="Run a whole batch of add / set / link / unlink from a YAML or JSON plan in ONE"
+             " process: the batch is rehearsed on a copy first, and the db is backed up"
+             " before it is written",
+    )
+    p_apply.add_argument("plan", metavar="PLAN", help="The plan file (YAML, or JSON)")
+    _add_project_option(p_apply)
+    _add_write_options(p_apply)
 
     p_verify = subs.add_parser(
         "verify",
@@ -927,6 +942,70 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
     return code
 
 
+def _backup_apply_db() -> Path:
+    """Copy the live db with SQLite's backup API to ``<product db>.bak-apply-<UTC stamp>``."""
+    source = store.db_path()
+    store.connect().close()                     # create/migrate it before copying
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    target = source.parent / f"{source.name}.bak-apply-{stamp}"
+    suffix = 1
+    while target.exists():                      # never overwrite an earlier backup
+        target = source.parent / f"{source.name}.bak-apply-{stamp}-{suffix}"
+        suffix += 1
+    src = sqlite3.connect(str(source))
+    dst = sqlite3.connect(str(target))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return target
+
+
+def _cmd_apply(args: argparse.Namespace) -> int:
+    """`apply PLAN [--project SLUG]` -> created/exists lines, one summary, `backup:` (HP-14).
+
+    Static validation first, then one rehearsal of every op on a throwaway copy (nothing
+    there can reach the live store), then the live run after a SQLite backup of the db.
+    """
+    plan_path = Path(args.plan).expanduser()
+    plan = apply_plan.load_plan(plan_path)
+    ops = apply_plan.validate_plan(plan)
+    plan_project = plan.get("project")
+    if args.project is not None and plan_project is not None and args.project != plan_project:
+        raise model.ValidationError(
+            f"--project {args.project!r} and the plan's project {plan_project!r} differ:"
+            " pass one of them, or make them the same"
+        )
+    project = store.resolve_project(args.project if args.project is not None else plan_project)
+    plan_dir = plan_path.resolve().parent
+    try:
+        with dryrun.throwaway_home():
+            rehearsal = apply_plan.run_ops(project, ops, plan_dir=plan_dir)
+    except apply_plan.OpFailure as failure:
+        raise store.StoreError(
+            f"op {failure.index} ({failure.summary}) failed: {failure.message};"
+            " nothing was written"
+        ) from None
+    if not (rehearsal.created or rehearsal.linked or rehearsal.unlinked or rehearsal.set_count):
+        # a pure re-run: the rehearsal changed nothing, so the live run would not either
+        for line in rehearsal.lines:
+            print(line)
+        return EXIT_OK
+    backup = _backup_apply_db()
+    try:
+        result = apply_plan.run_ops(project, ops, plan_dir=plan_dir)
+    except apply_plan.OpFailure as failure:
+        raise store.StoreError(
+            f"op {failure.index} ({failure.summary}) failed: {failure.message};"
+            f" restore with: cp {backup} {store.db_path()}"
+        ) from None
+    for line in result.lines:
+        print(line)
+    print(f"backup: {backup}")
+    return EXIT_OK
+
+
 def _cmd_verify(args: argparse.Namespace) -> int:
     """`verify [--rev REV] [--strict]` -> one line per criterion that is not ok, then a total."""
     project = _project(args)
@@ -1296,6 +1375,7 @@ _IMPLEMENTED_HANDLERS = {
     "fold-docs": _cmd_fold_docs,
     "verify": _cmd_verify,
     "adopt": _cmd_adopt,
+    "apply": _cmd_apply,
 }
 
 

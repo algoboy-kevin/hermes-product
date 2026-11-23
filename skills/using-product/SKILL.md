@@ -56,10 +56,14 @@ body with `show <REF> --body --section H --max-chars N`, a DOC with
 - Changes go through `set`/`link` (validated: exit 1 with a message naming the
   missing field).
 
+## Faster: apply a plan
+
+`hermes product apply plan.yaml` runs `ops` of add/set/link/unlink in ONE process, `$alias`
+naming an earlier `add ... as:`; `--dry-run` rehearses, one bad op refuses the whole batch.
 ## Verbs that exist
 
 project (add/list/use), add, set, link/unlink, show, list, trace, next, lint,
-graph, doc read, scan-prd, export, import.
+graph, doc read, scan-prd, export, import, apply.
 
 ## Full specification
 
