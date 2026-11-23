@@ -20,16 +20,19 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import docs_text, graph, model, store
+    from . import docs_text, export, graph, model, plan, store
 except ImportError:  # top-level module (test suite)
     import docs_text  # type: ignore[no-redef]
+    import export  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
+    import plan  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_NOT_IMPLEMENTED = 2
+EXIT_CONFLICT = 3
 
 # The one verb-path -> implementing-card map. HP numbers come from the HP-0 brief.
 VERB_CARDS: dict[str, str] = {
@@ -55,9 +58,10 @@ VERB_CARDS: dict[str, str] = {
 _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
 # Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
-# HP-3: link/unlink and the feature graph; HP-4: DOC bodies).
+# HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
+# HP-6: trace and next).
 IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
-               "link", "unlink", "graph", "doc read"}
+               "link", "unlink", "graph", "doc read", "export", "import", "trace", "next"}
 
 SEP = "  "
 
@@ -175,12 +179,17 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         help="For one entry, everything connected: requirement -> features, specs, "
              "criteria, docs, cards",
     )
-    _add_tail(p_trace)
+    p_trace.add_argument("ref", metavar="REF", help="R3, A21, F7, S2 or DOC1")
+    p_trace.add_argument("--depth", type=int, default=1, metavar="N",
+                         help="With 2: expand each linked R/F/S one more hop (default 1)")
+    _add_project_option(p_trace)
     p_next = subs.add_parser(
         "next",
         help="What to work on next: unblocked, highest priority, dependencies met",
     )
-    _add_tail(p_next)
+    p_next.add_argument("--limit", type=int, default=10, metavar="N",
+                        help="At most N lines per list (default 10)")
+    _add_project_option(p_next)
     p_lint = subs.add_parser("lint", help="All checks in S2")
     _add_tail(p_lint)
     p_graph = subs.add_parser(
@@ -210,9 +219,14 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     )
     _add_tail(p_scan)
     p_export = subs.add_parser("export", help="Export the project as plain text (S3)")
-    _add_tail(p_export)
+    p_export.add_argument("--out", required=True, metavar="DIR",
+                          help="Write the export here (required: there is no default)")
+    _add_project_option(p_export)
     p_import = subs.add_parser("import", help="Import a plain-text export (S3)")
-    _add_tail(p_import)
+    p_import.add_argument("dir", metavar="DIR", help="The export directory to import")
+    p_import.add_argument("--as", dest="as_slug", default=None, metavar="SLUG",
+                          help="Create the project under this slug instead of the"
+                               " one in project.yaml")
 
     subparser.set_defaults(func=product_command, _product_parser=subparser)
 
@@ -641,6 +655,236 @@ def _cmd_graph(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    """`export --out DIR [--project SLUG]` -> one summary line (S3 / A21)."""
+    project = _project(args)
+    counts = export.export_project(project, args.out)
+    print(f"exported {project} to {args.out}:"
+          f" {counts['requirements']} requirements, {counts['criteria']} criteria,"
+          f" {counts['features']} features, {counts['specs']} specs, {counts['docs']} docs")
+    return EXIT_OK
+
+
+def _cmd_import(args: argparse.Namespace) -> int:
+    """`import DIR [--as SLUG]` -> `imported <slug>: ...`; conflicts exit 3 (S3 / A22)."""
+    result = export.import_export(args.dir, as_slug=args.as_slug)
+    print(f"imported {result['slug']}: {result['inserted']} inserted,"
+          f" {result['skipped']} skipped, {result['conflicts']} conflicts")
+    for line in result["conflict_lines"]:
+        print(line)
+    return EXIT_CONFLICT if result["conflicts"] else EXIT_OK
+
+
+# ------------------------------------------------------------------ trace (HP-6)
+def _trace_compact(item: dict) -> str:
+    """A section entry's compact line; DOC lines drop the links column."""
+    if item["kind"] == "doc":
+        return SEP.join([
+            item["ref"], _column(item.get("doc_kind")), _column(item.get("status")),
+            _flat(item.get("title") or ""),
+        ])
+    return LINE_BUILDERS[item["kind"]](item)
+
+
+def _card_line(row: dict) -> str:
+    """`<system>:<external_id>  <role|->  <url|->`."""
+    return SEP.join([f"{row['system']}:{row['external_id']}",
+                     _column(row.get("role")), _column(row.get("url"))])
+
+
+def _section(name: str, lines: list[str]) -> list[str]:
+    """`<name>:` then each line indented two spaces; nothing when empty."""
+    return [] if not lines else [f"{name}:"] + ["  " + line for line in lines]
+
+
+def _trace_data(con, project: str) -> dict:
+    """Everything trace reads, gathered once: items, dependency edges, doc links."""
+    items = {(item["kind"], item["id"]): item
+             for item in store.list_entities(project, con=con)}
+    deps = {kind: store.dependency_pairs(con, project, kind)
+            for kind in ("requirement", "feature", "spec")}
+    docs_by_entity: dict[tuple, list] = {}
+    for item in items.values():
+        if item["kind"] == "doc":
+            for target in item.get("doc_links") or []:
+                key = (target[0], target[1])
+                if key in items:
+                    docs_by_entity.setdefault(key, []).append(item)
+    return {"con": con, "project": project, "items": items,
+            "deps": deps, "docs": docs_by_entity}
+
+
+def _needs(ctx: dict, kind: str, entity_id: int) -> list[int]:
+    return [needs_id for row_id, needs_id, _opt in ctx["deps"][kind]
+            if row_id == entity_id]
+
+
+def _needed_by(ctx: dict, kind: str, entity_id: int) -> list[int]:
+    return [row_id for row_id, needs_id, _opt in ctx["deps"][kind]
+            if needs_id == entity_id]
+
+
+def _entries(ctx: dict, name: str, entries: list[dict], depth: int,
+             seen: set) -> list[str]:
+    """One section of entry lines; at depth 2 each linked R/F/S nests one hop."""
+    out = _section(name, [_trace_compact(entry) for entry in entries])
+    if depth != 2:
+        return out
+    for entry in entries:
+        key = (entry["kind"], entry["id"])
+        if entry["kind"] in ("requirement", "feature", "spec") and key not in seen:
+            seen.add(key)
+            out += ["    " + line for line in _trace_block(ctx, entry, 1, seen)]
+    return out
+
+
+def _cards(ctx: dict, item: dict) -> list[str]:
+    rows = store.external_links_of(ctx["con"], ctx["project"], item["kind"], item["id"])
+    return _section("cards", [_card_line(row) for row in rows])
+
+
+def _trace_block(ctx: dict, item: dict, depth: int, seen: set) -> list[str]:
+    """One entry's derived lines and sections (no compact line)."""
+    kind, items = item["kind"], ctx["items"]
+    out: list[str] = []
+    if kind == "requirement":
+        criteria = [items[("criterion", cid)] for cid in item["links"]["criteria"]]
+        done, total = plan.requirement_progress(c["status"] for c in criteria)
+        out.append(f"progress: {done}/{total} criteria")
+        span = plan.evidence_span(c.get("evidence_level") for c in criteria
+                                  if c["status"] == "passed")
+        out.append("evidence: none" if span is None
+                   else f"evidence: strongest {span[0]}, weakest {span[1]}")
+        out += _entries(ctx, "features",
+                        [items[("feature", fid)] for fid in item["links"]["features"]],
+                        depth, seen)
+        out += _entries(ctx, "specs",
+                        [items[("spec", sid)] for sid in item["links"]["specs"]],
+                        depth, seen)
+        out += _entries(ctx, "criteria", criteria, depth, seen)
+        out += _entries(ctx, "docs",
+                        ctx["docs"].get(("requirement", item["id"]), []), depth, seen)
+        out += _entries(ctx, "needs",
+                        [items[("requirement", rid)]
+                         for rid in _needs(ctx, "requirement", item["id"])], depth, seen)
+        out += _entries(ctx, "needed by",
+                        [items[("requirement", rid)]
+                         for rid in _needed_by(ctx, "requirement", item["id"])],
+                        depth, seen)
+        out += _cards(ctx, item)
+    elif kind == "feature":
+        reqs = [items[("requirement", rid)] for rid in item["links"]["requirements"]]
+        done, total = plan.feature_progress(r["status"] for r in reqs)
+        out.append(f"progress: {done}/{total} requirements done")
+        out += _entries(ctx, "requirements", reqs, depth, seen)
+        out += _entries(ctx, "specs",
+                        [items[("spec", sid)] for sid in item["links"]["specs"]],
+                        depth, seen)
+        out += _entries(ctx, "needs",
+                        [items[("feature", fid)]
+                         for fid in _needs(ctx, "feature", item["id"])], depth, seen)
+        out += _entries(ctx, "needed by",
+                        [items[("feature", fid)]
+                         for fid in _needed_by(ctx, "feature", item["id"])],
+                        depth, seen)
+        out += _entries(ctx, "docs",
+                        ctx["docs"].get(("feature", item["id"]), []), depth, seen)
+        out += _cards(ctx, item)
+    elif kind == "spec":
+        out += _entries(ctx, "requirements",
+                        [items[("requirement", rid)]
+                         for rid in item["links"]["requirements"]], depth, seen)
+        out += _entries(ctx, "features",
+                        [items[("feature", fid)] for fid in item["links"]["features"]],
+                        depth, seen)
+        out += _entries(ctx, "needs",
+                        [items[("spec", sid)]
+                         for sid in _needs(ctx, "spec", item["id"])], depth, seen)
+        out += _entries(ctx, "needed by",
+                        [items[("spec", sid)]
+                         for sid in _needed_by(ctx, "spec", item["id"])], depth, seen)
+        out += _entries(ctx, "docs",
+                        ctx["docs"].get(("spec", item["id"]), []), depth, seen)
+        out += _cards(ctx, item)
+    elif kind == "criterion":
+        parent = items[("requirement", item["requirement_id"])]
+        out += _entries(ctx, "requirement", [parent], depth, seen)
+        out += _entries(ctx, f"via {parent['ref']}",
+                        [items[("feature", fid)] for fid in parent["links"]["features"]],
+                        depth, seen)
+        if parent.get("prd_ref"):
+            out.append(f"prd: {_flat(parent['prd_ref'])}")
+        docs = ctx["docs"].get(("criterion", item["id"]), []) + \
+            ctx["docs"].get(("requirement", item["requirement_id"]), [])
+        out += _entries(ctx, "docs", docs, depth, seen)
+    elif kind == "doc":
+        linked = [items[(target[0], target[1])] for target in item.get("doc_links") or []
+                  if (target[0], target[1]) in items]
+        out += _entries(ctx, "links", linked, depth, seen)
+    return out
+
+
+def _cmd_trace(args: argparse.Namespace) -> int:
+    """`trace <REF> [--depth 1|2]` -> the connected graph of one entry (HP-6)."""
+    if args.depth not in (1, 2):
+        raise model.ValidationError("depth must be 1 or 2")
+    project = _project(args)
+    con = store.connect()
+    try:
+        kind, entity_id = store.resolve_entity(project, args.ref, con=con)
+        ctx = _trace_data(con, project)
+        item = ctx["items"][(kind, entity_id)]
+        seen = {(kind, entity_id)}
+        lines = [LINE_BUILDERS[kind](item)]          # the entry's own line: as in list
+        lines += _trace_block(ctx, item, args.depth, seen)
+    finally:
+        con.close()
+    print("\n".join(lines))
+    return EXIT_OK
+
+
+def _cmd_next(args: argparse.Namespace) -> int:
+    """`next [--limit N]` -> the ready queue and what blocks the rest (HP-6)."""
+    project = _project(args)
+    con = store.connect()
+    try:
+        items = list(store.list_entities(project, "feature", con=con))
+        requirements = {item["id"]: item
+                        for item in store.list_entities(project, "requirement", con=con)}
+        status_by_id = {item["id"]: item["status"] for item in items}
+        edges = store.dependency_pairs(con, project, "feature")
+        mandatory = {item["id"]: [(needs_id, optional)
+                                  for row_id, needs_id, optional in edges
+                                  if row_id == item["id"]] for item in items}
+        needs_map = {item["id"]: [needs_id for row_id, needs_id, _optional in edges
+                                 if row_id == item["id"]] for item in items}
+        req_priority = {item["id"]: [(requirements[rid]["priority"],
+                                      requirements[rid]["status"])
+                                     for rid in item["links"]["requirements"]
+                                     if rid in requirements] for item in items}
+        priorities = plan.effective_priority(status_by_id, req_priority, needs_map)
+        for item in items:
+            item["priority"] = priorities[item["id"]]
+        ready, blocked = plan.ready_and_blocked(items, mandatory, status_by_id)
+    finally:
+        con.close()
+    print(f"next ({project}): {len(ready)} ready, {len(blocked)} blocked")
+    if ready:
+        for item in ready[: args.limit]:
+            print(_line_feature(item))
+        if len(ready) > args.limit:
+            print(f"  \u2026 and {len(ready) - args.limit} more")
+    else:
+        print("nothing ready")
+    if blocked:
+        print("blocked:")
+        for item, reason in blocked[: args.limit]:
+            print(f"{_line_feature(item)}{SEP}{reason}")
+        if len(blocked) > args.limit:
+            print(f"  \u2026 and {len(blocked) - args.limit} more")
+    return EXIT_OK
+
+
 _IMPLEMENTED_HANDLERS = {
     "project add": _project_add,
     "project list": _project_list,
@@ -653,6 +897,10 @@ _IMPLEMENTED_HANDLERS = {
     "unlink": lambda args: _cmd_link(args, remove=True),
     "graph": _cmd_graph,
     "doc read": _cmd_doc_read,
+    "export": _cmd_export,
+    "import": _cmd_import,
+    "trace": _cmd_trace,
+    "next": _cmd_next,
 }
 
 

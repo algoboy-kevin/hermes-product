@@ -933,6 +933,34 @@ def links_of(con: sqlite3.Connection, project: str, kind: str, entity_id: int) -
     return {}
 
 
+def dependency_pairs(con: sqlite3.Connection, project: str, kind: str) -> list[tuple]:
+    """(id, needs_id, optional) of one dependency table; ordered and complete.
+
+    The table is picked by ``kind`` (requirement/feature/spec); ``optional`` is
+    0 for the kinds whose dependency table has no such column.
+    """
+    table, self_column, other_column = DEPENDENCY_LINKS[kind]
+    optional_column = ", optional" if kind == "feature" else ", 0 AS optional"
+    rows = con.execute(
+        f"SELECT {self_column}, {other_column}{optional_column} FROM {table}"
+        f" WHERE project = ? ORDER BY {self_column}, {other_column}",
+        (project,),
+    )
+    return [tuple(row) for row in rows]
+
+
+def external_links_of(con: sqlite3.Connection, project: str, kind: str,
+                      entity_id: int) -> list[dict]:
+    """The external_link rows of one entity, deterministic order."""
+    rows = con.execute(
+        "SELECT system, external_id, url, role FROM external_link"
+        " WHERE project = ? AND entity_type = ? AND entity_id = ?"
+        " ORDER BY system, external_id",
+        (project, kind, entity_id),
+    )
+    return [dict(row) for row in rows]
+
+
 def history_of(con: sqlite3.Connection, project: str, kind: str, entity_id: int,
                *, limit: int = 10) -> list[dict]:
     """The last ``limit`` history rows, newest first."""
