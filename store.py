@@ -1467,6 +1467,62 @@ def update_entity(project: str, ref: str, changes: dict, *, reason: Optional[str
             con.close()
 
 
+def status_blockers(project: str, ref: str, changes: dict, *,
+                    reason: Optional[str] = None,
+                    override_reason: Optional[str] = None,
+                    con: Optional[sqlite3.Connection] = None) -> dict:
+    """Every unmet prerequisite of the status move in ``changes`` (HP-13); writes nothing.
+
+    Resolves the entry, validates the fields and reads the facts exactly as
+    ``update_entity`` does (including the HP-12 rule that ``reason`` fills
+    ``status_reason`` on a move to a terminal state), then asks
+    ``model.transition_blockers``. No row, history row or ``updated_at`` changes.
+    """
+    if "status" not in changes:
+        raise model.ValidationError("--why-not needs status=<state>")
+    own = con is None
+    con = con or connect()
+    try:
+        kind, entity_id = resolve_entity(project, ref, con=con)
+        row = _select_row(con, project, kind, entity_id)
+        assert row is not None
+        allowed = model.SET_FIELDS[kind]
+        for name in changes:
+            if name not in allowed:
+                raise model.ValidationError(
+                    f"unknown field {name!r} for {model.format_ref(kind, entity_id)};"
+                    f" editable keys are {', '.join(allowed)}"
+                )
+        values: dict[str, Any] = {}
+        for name, raw in changes.items():
+            values[name] = model.validate_field(kind, name, raw)
+        if isinstance(values.get("paths"), (list, tuple)):
+            values["paths"] = json.dumps(list(values["paths"]))
+        clean_reason = (str(reason).strip() or None) if reason is not None else None
+        if (values["status"] in model.TERMINAL.get(kind, ())
+                and clean_reason
+                and "status_reason" in allowed
+                and "status_reason" not in values):
+            values["status_reason"] = clean_reason
+        merged = {**row, **values}
+        facts = load_facts(con, project, kind, entity_id, merged)
+        clean_override = ((str(override_reason).strip() or None)
+                          if override_reason is not None else None)
+        if clean_override:
+            facts["override_reason"] = clean_override
+        return {
+            "ref": model.format_ref(kind, entity_id),
+            "kind": kind,
+            "from": row["status"],
+            "to": values["status"],
+            "blockers": model.transition_blockers(
+                kind, row["status"], values["status"], merged, facts),
+        }
+    finally:
+        if own:
+            con.close()
+
+
 # --------------------------------------------------------------------- links (HP-3)
 #: same-kind dependency tables: kind -> (table, subject column, needs column)
 DEPENDENCY_LINKS = {

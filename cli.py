@@ -184,6 +184,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                             " mandatory dependency is still planned")
     p_set.add_argument("--body-file", dest="body_file", default=None, metavar="PATH",
                        help="Replace the body with this file (R#, F#, S#, DOC#)")
+    p_set.add_argument("--why-not", dest="why_not", action="store_true", default=False,
+                       help="Do not write: print every unmet prerequisite of the status move")
     _add_write_options(p_set)
     _add_project_option(p_set)
     p_link = subs.add_parser("link", help="Create a relation, or add a dependency edge")
@@ -683,6 +685,19 @@ def _cmd_set(args: argparse.Namespace) -> int:
         if not key:
             raise model.ValidationError(f"expected key=value, got {pair!r}: empty key")
         changes[key] = value
+    if args.why_not:
+        if args.body_file is not None:
+            raise model.ValidationError("--why-not does not take --body-file")
+        report = store.status_blockers(project, args.ref, changes, reason=args.reason,
+                                       override_reason=args.override_reason)
+        move_text = f"{report['ref']} {report['from']} -> {report['to']}"
+        if not report["blockers"]:
+            print(f"{move_text} is possible")
+            return EXIT_OK
+        print(f"{move_text} is blocked:")
+        for blocker in report["blockers"]:
+            print(f"  - {blocker}")
+        return EXIT_ERROR
     result = store.update_entity(project, args.ref, changes, reason=args.reason,
                                  override_reason=args.override_reason,
                                  body_source=args.body_file)

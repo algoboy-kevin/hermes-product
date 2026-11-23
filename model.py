@@ -558,3 +558,128 @@ def _doc_exit(move_text: str, target: str, fields: dict, facts: dict) -> None:
                 f"cannot move {move_text}: needs superseded_by naming an existing,"
                 " different document in the same project"
             )
+
+
+# --------------------------------------------------------------- --why-not (HP-13)
+def transition_blockers(kind: str, status: str, target: str, fields: dict,
+                        facts: dict) -> list[str]:
+    """Every unmet condition of ``status -> target`` as a short phrase (HP-13).
+
+    Pure and never raises for rule problems. The phrases mirror exactly what
+    ``check_transition`` enforces, so the result is ``[]`` if and only if
+    ``check_transition(kind, {"status": status, **fields}, target, fields, facts)``
+    would pass. One entry per missing thing, in a stable order: reachability
+    first, then the exit conditions in the order ``_*_exit`` checks them.
+    """
+    statuses = STATUSES[kind]
+    if target not in statuses:
+        return [f"{target} is not a state of {PREFIX[kind]}# (one of {'|'.join(statuses)})"]
+    if target == status:
+        return [f"already {status}"]
+
+    chain = CHAIN.get(kind)
+    terminal = TERMINAL.get(kind, ())
+    allowed = TRANSITIONS[kind].get(status, ())
+    if target not in allowed:
+        if status in terminal:
+            return [f"{status} is terminal and cannot be left"]
+        if chain is not None and status in chain and target in chain:
+            through = chain[chain.index(status) + 1]
+            blockers = [f"go through {through} first"]
+            blockers.extend(f"then, to reach {through}: {item}"
+                            for item in _exit_blockers(kind, through, fields, facts))
+            blockers.extend(f"then, to reach {target}: {item}"
+                            for item in _exit_blockers(kind, target, fields, facts))
+            return blockers
+        return [f"{target} is not reachable from {status}"]
+    return _exit_blockers(kind, target, fields, facts)
+
+
+def _exit_blockers(kind: str, target: str, fields: dict, facts: dict) -> list[str]:
+    """The unmet conditions of one target state, one entry per missing thing."""
+    blockers: list[str] = []
+    if kind == "requirement":
+        if target == "approved":
+            if not _has_text(fields.get("rationale")):
+                blockers.append("needs a rationale")
+            if int(facts.get("features", 0)) < 1:
+                blockers.append("needs at least one linked feature (has 0 features)")
+        elif target == "in_progress":
+            specs = int(facts.get("specs", 0))
+            criteria = int(facts.get("criteria", 0))
+            if specs < 1:
+                blockers.append("needs at least one spec (has 0 specs)")
+            if criteria < 1:
+                blockers.append("needs at least one criterion (has 0 criteria)")
+        elif target == "done":
+            total = int(facts.get("criteria", 0))
+            still_open = int(facts.get("criteria_open", 0))
+            if total < 1:
+                blockers.append("needs at least one criterion")
+            if still_open:
+                blockers.append(
+                    "every criterion must be passed or waived"
+                    f" (has {total} criteria, {still_open} not passed or waived)"
+                )
+        elif target == "dropped":
+            if not _has_text(fields.get("status_reason")):
+                blockers.append("needs status_reason")
+            if fields.get("superseded_by") is not None and not facts.get("superseded_by_ok"):
+                blockers.append("superseded_by must be an existing, different"
+                                " requirement in the same project")
+    elif kind == "feature":
+        if target == "in_progress":
+            blocked = [int(value) for value in facts.get("mandatory_planned", [])]
+            if blocked and not facts.get("override_reason"):
+                named = ", ".join(f"F{value} (planned)" for value in blocked)
+                blockers.append(f"depends on {named}")
+        elif target == "shipped":
+            total = int(facts.get("requirements", 0))
+            still_open = int(facts.get("requirements_not_done", 0))
+            if total == 0 and not fields.get("infra"):
+                blockers.append("a feature with no linked requirement may not ship"
+                                " (set infra=1 for plumbing)")
+            if still_open:
+                blockers.append(f"every linked requirement must be done"
+                                f" ({still_open} still open)")
+        elif target == "cut":
+            if not _has_text(fields.get("status_reason")):
+                blockers.append("needs status_reason")
+            only_here = int(facts.get("open_only_here", 0))
+            if only_here:
+                blockers.append(
+                    f"{only_here} open requirement(s) are linked only to this feature"
+                    " - link them to another non-cut feature or drop them first"
+                )
+    elif kind == "spec":
+        if target == "approved":
+            if int(facts.get("requirements", 0)) < 1:
+                blockers.append("needs at least one linked requirement")
+        elif target == "implemented":
+            if not _has_text(fields.get("notes")) and int(facts.get("external_links", 0)) < 1:
+                blockers.append("needs notes or an external link")
+        elif target == "verified":
+            if int(facts.get("requirements", 0)) < 1:
+                blockers.append("needs at least one linked requirement")
+            total = int(facts.get("criteria", 0))
+            still_open = int(facts.get("criteria_open", 0))
+            if total < 1:
+                blockers.append("needs at least one criterion")
+            if still_open:
+                blockers.append(
+                    "every criterion must be passed or waived"
+                    f" (has {total} criteria, {still_open} not passed or waived)"
+                )
+        elif target == "superseded":
+            if fields.get("superseded_by") is None or not facts.get("superseded_by_ok"):
+                blockers.append("needs superseded_by naming an existing, different spec"
+                                " in the same project")
+    elif kind == "doc":
+        if target == "superseded":
+            if fields.get("superseded_by") is None or not facts.get("superseded_by_ok"):
+                blockers.append("needs superseded_by naming an existing, different document"
+                                " in the same project")
+    elif kind == "criterion" and target in ("passed", "waived"):
+        if not _has_text(fields.get("evidence")):
+            blockers.append(f"{target} needs evidence")
+    return blockers

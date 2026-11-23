@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import model
 import store
 from _helpers import (
     add_criterion,
@@ -567,3 +568,66 @@ def test_a_drop_without_any_reason_is_still_refused(home: Path, capsys) -> None:
     assert rc == 1
     assert "needs status_reason" in err
     assert status_of(PROJECT, "requirement", 1) == "draft"
+
+
+# ------------------------------------------- --why-not matches the rules (HP-13)
+#: small field grids: every key the status exits read, alone and all together
+WHY_NOT_FIELDS = (
+    {},
+    {"rationale": "Revenue"},
+    {"status_reason": "why"},
+    {"superseded_by": 2},
+    {"evidence": "given card, then ok"},
+    {"notes": "deployed"},
+    {"infra": 1},
+    {"rationale": "Revenue", "status_reason": "why", "superseded_by": 2,
+     "evidence": "given card, then ok", "notes": "deployed", "infra": 1},
+)
+
+#: small fact grids: empty, all satisfied, and one row per blocking fact
+_EMPTY_FACTS = {
+    "features": 0, "specs": 0, "criteria": 0, "criteria_open": 0,
+    "requirements": 0, "requirements_not_done": 0, "open_only_here": 0,
+    "mandatory_planned": [], "superseded_by_ok": False, "external_links": 0,
+}
+WHY_NOT_FACTS = (
+    dict(_EMPTY_FACTS),
+    {**_EMPTY_FACTS, "features": 1, "specs": 1, "criteria": 1,
+     "requirements": 1, "superseded_by_ok": True, "external_links": 1},
+    {**_EMPTY_FACTS, "criteria": 2, "criteria_open": 1},
+    {**_EMPTY_FACTS, "requirements": 1, "requirements_not_done": 1},
+    {**_EMPTY_FACTS, "open_only_here": 1},
+    {**_EMPTY_FACTS, "mandatory_planned": [2]},
+    {**_EMPTY_FACTS, "mandatory_planned": [2], "override_reason": "hotfix"},
+    {**_EMPTY_FACTS, "superseded_by_ok": True},
+)
+
+
+def _check_transition_passes(kind: str, status: str, target: str,
+                            fields: dict, facts: dict) -> bool:
+    try:
+        model.check_transition(kind, {"status": status, "id": 1, **fields},
+                               target, fields, facts)
+    except model.ValidationError:
+        return False
+    return True
+
+
+def test_why_not_is_empty_exactly_when_check_transition_passes() -> None:
+    cases = 0
+    for kind in model.KINDS:
+        for status in model.STATUSES[kind]:
+            for target in model.STATUSES[kind]:
+                for fields in WHY_NOT_FIELDS:
+                    for facts in WHY_NOT_FACTS:
+                        cases += 1
+                        blockers = model.transition_blockers(
+                            kind, status, target, fields, facts)
+                        passes = _check_transition_passes(
+                            kind, status, target, fields, facts)
+                        assert (blockers == []) == passes, (
+                            f"{kind} {status} -> {target} {fields} {facts}"
+                            f" blockers={blockers} passes={passes}")
+                        assert all(isinstance(item, str) and item.strip()
+                                   and "cannot move" not in item for item in blockers)
+    assert cases >= 1000
