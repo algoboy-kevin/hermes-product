@@ -191,11 +191,13 @@ def test_a_failure_after_the_body_write_leaves_no_row_and_no_file(
     def boom(_doc_id: int) -> None:
         raise RuntimeError("disk went away")
 
-    monkeypatch.setattr(store, "_after_body_write", boom)
-    with pytest.raises(RuntimeError):
-        run(["add", "DOC", "--title", "Webhook flow", "--kind", "design",
-             "--summary", SUMMARY, "--body", "# Payments\n"])
-    monkeypatch.undo()
+    # Scoped patch: a bare monkeypatch.undo() would also undo the `home` fixture's
+    # HERMES_HOME and the conftest guard, so the asserts below would read the REAL store.
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_after_body_write", boom)
+        with pytest.raises(RuntimeError):
+            run(["add", "DOC", "--title", "Webhook flow", "--kind", "design",
+                 "--summary", SUMMARY, "--body", "# Payments\n"])
 
     assert cli(capsys, "list", "DOC")[1] == ""
     assert not (store.docs_dir(PROJECT) / "DOC1.md").exists()
