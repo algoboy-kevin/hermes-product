@@ -5,9 +5,10 @@ section 2 and made each one a loud stub. Card HP-1 implemented ``project add/lis
 Card HP-2 implements ``add``, ``show`` and ``list`` (STEP 1) and ``set`` (STEP 2):
 entries are validated, every failure prints its message to stderr and returns 1.
 
-Every remaining verb stays a loud stub: one stderr line
-``NOT IMPLEMENTED: <verb path> (card HP-<n>)`` and exit code 2. The verb ->
-implementing-card map lives in ``VERB_CARDS`` alone.
+Card HP-7 implements ``lint`` and card HP-8 ``scan-prd``: every verb of the S4
+table is real now. A verb path missing from ``IMPLEMENTED`` still prints one
+stderr line ``NOT IMPLEMENTED: <verb path> (card HP-<n>)`` and exits 2, and the
+verb -> implementing-card map lives in ``VERB_CARDS`` alone.
 """
 
 from __future__ import annotations
@@ -20,13 +21,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import docs_text, export, graph, model, plan, store
+    from . import docs_text, export, graph, lint, model, plan, scan, store
 except ImportError:  # top-level module (test suite)
     import docs_text  # type: ignore[no-redef]
     import export  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
+    import lint  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import plan  # type: ignore[no-redef]
+    import scan  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
 
 EXIT_OK = 0
@@ -59,9 +62,10 @@ _TOP_LEVEL = tuple(dict.fromkeys(path.split()[0] for path in VERB_CARDS))
 
 # Verbs this build actually implements (HP-1: the project verbs; HP-2: entities;
 # HP-3: link/unlink and the feature graph; HP-4: DOC bodies; HP-5: export/import;
-# HP-6: trace and next).
+# HP-6: trace and next; HP-7: lint; HP-8: scan-prd).
 IMPLEMENTED = {"project add", "project list", "project use", "add", "set", "show", "list",
-               "link", "unlink", "graph", "doc read", "export", "import", "trace", "next"}
+               "link", "unlink", "graph", "doc read", "export", "import", "trace", "next",
+               "lint", "scan-prd"}
 
 SEP = "  "
 
@@ -191,7 +195,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
                         help="At most N lines per list (default 10)")
     _add_project_option(p_next)
     p_lint = subs.add_parser("lint", help="All checks in S2")
-    _add_tail(p_lint)
+    p_lint.add_argument("--json", dest="json", action="store_true", default=False,
+                        help="Print one JSON object instead of text")
+    _add_project_option(p_lint)
     p_graph = subs.add_parser(
         "graph",
         help="Export the feature graph as Mermaid; --critical prints the critical path",
@@ -217,7 +223,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
         "scan-prd",
         help="Index bracketed references in the PRD and DOC bodies",
     )
-    _add_tail(p_scan)
+    _add_project_option(p_scan)
     p_export = subs.add_parser("export", help="Export the project as plain text (S3)")
     p_export.add_argument("--out", required=True, metavar="DIR",
                           help="Write the export here (required: there is no default)")
@@ -885,6 +891,43 @@ def _cmd_next(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_lint(args: argparse.Namespace) -> int:
+    """`lint [--json] [--project SLUG]` -> the S2 section 3 report; exit 1 on any Error."""
+    project = _project(args)
+    findings = lint.run(project)
+    errors = sum(1 for finding in findings if finding.severity == "error")
+    warnings = sum(1 for finding in findings if finding.severity == "warning")
+    if args.json:
+        payload = {
+            "project": project,
+            "errors": errors,
+            "warnings": warnings,
+            "findings": [{"flag": finding.flag, "severity": finding.severity,
+                          "ref": finding.ref, "message": finding.message}
+                         for finding in findings],
+            "not_yet": list(lint.NOT_YET),
+        }
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print(f"lint ({project}): {errors} errors, {warnings} warnings")
+        for finding in findings:
+            print(f"{finding.severity} {finding.flag} {finding.ref}  {finding.message}")
+        print(f"not yet checked: {', '.join(lint.NOT_YET)}")
+    return EXIT_ERROR if errors else EXIT_OK
+
+
+def _cmd_scan_prd(args: argparse.Namespace) -> int:
+    """`scan-prd [--project SLUG]` -> counts, then one line per broken reference (A18)."""
+    project = _project(args)
+    result = lint.scan_project(project)
+    problems = result["problems"]
+    print(f"scan-prd ({project}): {result['documents']} documents,"
+          f" {result['references']} references, {len(problems)} problems")
+    for doc_ref, problem in problems:
+        print(scan.format_problem(doc_ref, problem))
+    return EXIT_ERROR if problems else EXIT_OK
+
+
 _IMPLEMENTED_HANDLERS = {
     "project add": _project_add,
     "project list": _project_list,
@@ -901,6 +944,8 @@ _IMPLEMENTED_HANDLERS = {
     "import": _cmd_import,
     "trace": _cmd_trace,
     "next": _cmd_next,
+    "lint": _cmd_lint,
+    "scan-prd": _cmd_scan_prd,
 }
 
 

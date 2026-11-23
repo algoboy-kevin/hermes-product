@@ -4,8 +4,8 @@ What is pinned here, and only here:
 
 * the manifest fields Hermes and the catalog read (plugin.yaml);
 * ``register(ctx)`` touching exactly one surface (the CLI command) and never raising;
-* every CLI verb path being a loud stub: exit 2 and one stderr line naming the
-  verb path and the card that will implement it;
+* every CLI verb path of the S4 command table being implemented (no verb is a
+  loud stub any more since HP-8);
 * the CLI verb list staying in sync with the S4 command table.
 
 No test reads docs/: the expected verb names are transcribed into constants below
@@ -144,17 +144,11 @@ def test_register_never_raises_when_the_ctx_raises() -> None:
     _plugin().register(_BoomCtx())                                  # must not raise
 
 
-# ------------------------------------------------------------------ c. loud stubs
-@pytest.mark.parametrize(
-    "verb_path,card",
-    sorted((verb, card) for verb, card in EXPECTED_VERB_CARDS.items() if verb not in IMPLEMENTED),
-)
-def test_verb_is_a_loud_stub(verb_path: str, card: str, capsys) -> None:
-    args = _build_parser().parse_args(verb_path.split())
-    rc = product_command(args)
-    captured = capsys.readouterr()
-    assert rc == 2
-    assert f"NOT IMPLEMENTED: {verb_path} (card {card})" in captured.err
+# ---------------------------------------------------------- c. every verb is real
+def test_every_verb_path_is_implemented() -> None:
+    # HP-8 closes the last stub: no verb of the S4 table may still print
+    # `NOT IMPLEMENTED` and exit 2.
+    assert set(EXPECTED_VERB_CARDS) <= IMPLEMENTED
 
 
 # ------------------------------------------------------------------ d. help output
@@ -181,11 +175,9 @@ def test_no_verb_prints_help_and_returns_zero(capsys) -> None:
     assert "usage:" in captured.out
 
 
-def test_extra_args_are_accepted_and_ignored(capsys) -> None:
-    # A verb that is still a stub keeps its REMAINDER tail (trace/next are real
-    # since HP-6 and parse their args strictly).
-    args = _build_parser().parse_args(["lint", "extra", "words"])
-    rc = product_command(args)
-    captured = capsys.readouterr()
-    assert rc == 2
-    assert "NOT IMPLEMENTED: lint (card HP-7)" in captured.err
+def test_extra_args_are_now_refused_by_a_real_verb() -> None:
+    # Every verb parses its args strictly since HP-8: an unknown argument is an
+    # argparse error (SystemExit 2), never silently ignored.
+    with pytest.raises(SystemExit) as excinfo:
+        _build_parser().parse_args(["scan-prd", "extra", "words"])
+    assert excinfo.value.code == 2
