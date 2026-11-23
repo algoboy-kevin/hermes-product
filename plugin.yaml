@@ -8,9 +8,12 @@ platforms:
   - macos
   - linux
   - windows
-# Scaffold (card HP-0): nothing is registered beyond the CLI yet. Later cards add
-# tools, a skill and a prompt section and update these lists to match register(ctx).
-provides_tools: []
+provides_tools:
+  - product_show
+  - product_trace
+  - product_next
+  - product_lint
+  - product_list
 provides_hooks: []
 # Core Hermes already pins ruamel.yaml 0.18.16; the plugin needs round-trip YAML so
 # hand edits and comments survive a write. Floor + upper bound, per catalog policy.

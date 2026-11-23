@@ -3,7 +3,8 @@
 What is pinned here, and only here:
 
 * the manifest fields Hermes and the catalog read (plugin.yaml);
-* ``register(ctx)`` touching exactly one surface (the CLI command) and never raising;
+* ``register(ctx)`` touching the CLI command plus, since HP-9, the five tools,
+  the skill and the prompt section — and never raising;
 * every CLI verb path being a loud stub: exit 2 and one stderr line naming the
   verb path and the card that will implement it;
 * the CLI verb list staying in sync with the S4 command table.
@@ -119,7 +120,7 @@ class _FakeCtx:
         self.sections.append({"args": args, **kwargs})
 
 
-def test_register_adds_exactly_the_cli_command() -> None:
+def test_register_adds_the_cli_command_tools_skill_and_section() -> None:
     ctx = _FakeCtx()
     plugin = _plugin()
     plugin.register(ctx)                                           # must not raise
@@ -130,10 +131,22 @@ def test_register_adds_exactly_the_cli_command() -> None:
     # module object than the top-level `cli` import: compare against that one.
     assert ctx.cli[0]["setup_fn"] is plugin.cli.register_cli
     assert ctx.cli[0]["handler_fn"] is plugin.cli.product_command
-    # Nothing else is registered yet: no tools, skill or prompt section.
-    assert ctx.tools == []
-    assert ctx.skills == []
-    assert ctx.sections == []
+    # HP-9 surface (was: "nothing else is registered yet"): five read-only
+    # tools, one skill and one system-prompt section alongside the CLI.
+    assert [t["name"] for t in ctx.tools] == [
+        "product_show", "product_trace", "product_next", "product_lint", "product_list",
+    ]
+    assert all(t["toolset"] == "product" for t in ctx.tools)
+    assert len(ctx.skills) == 1
+    skill_name, skill_path, skill_desc = ctx.skills[0]["args"]
+    assert skill_name == "using-product"
+    assert Path(skill_path).is_file()
+    assert skill_desc.startswith("Use when") and len(skill_desc) <= 60
+    assert len(ctx.sections) == 1
+    section_id, section_fn = ctx.sections[0]["args"]
+    assert section_id == "product"
+    assert callable(section_fn)
+    assert ctx.sections[0]["max_chars"] == 600
 
 
 def test_register_never_raises_when_the_ctx_raises() -> None:
