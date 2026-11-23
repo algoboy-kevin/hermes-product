@@ -86,6 +86,34 @@ def section(markdown: str, heading_text: str) -> Optional[str]:
     return None
 
 
+#: a line that states state: `Status: DRAFT`, `**Status:** done`, `> status: x` (any case)
+_STATUS_RE = re.compile(r"^[ \t]{0,3}[>*_ \t-]*status[*_]*[ \t]*[:\uff1a]", re.IGNORECASE)
+
+
+def status_lines(markdown: str) -> list[tuple[int, str]]:
+    """``[(line_number, line), ...]`` of lines that declare a status, outside code fences.
+
+    State lives in a row's ``status`` field, never in text (S1 sections 3.1 and 7); this
+    is what the ``status_in_body`` lint looks for. Line numbers are 1-based.
+    """
+    found: list[tuple[int, str]] = []
+    fence: Optional[str] = None
+    for number, line in enumerate(markdown.splitlines(), start=1):
+        stripped = line.strip()
+        marker = next((candidate for candidate in _FENCES if stripped.startswith(candidate)),
+                      None)
+        if fence is not None:
+            if marker == fence:
+                fence = None
+            continue
+        if marker is not None:
+            fence = marker
+            continue
+        if _STATUS_RE.match(line):
+            found.append((number, stripped))
+    return found
+
+
 def bounded(text: str, max_chars: int) -> tuple[str, int, bool]:
     """``(slice, total_chars, truncated)``; the slice never exceeds ``max_chars``.
 

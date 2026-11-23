@@ -41,7 +41,7 @@ def ordered(home) -> None:
                              status="in_progress")                 # F1
     feature_with_requirement("Ledger", "foundation", "Keep a ledger", "must")   # F2
     feature_with_requirement("Stripe integration", "core", "Charge cards", "must")  # F3
-    add_feature(title="Auth plumbing", layer="core")               # F4, no reqs -> could
+    add_feature(title="Auth plumbing", layer="core", infra=True)   # F4, no reqs -> could
 
 
 def test_next_first_line_counts(ordered, capsys) -> None:
@@ -154,7 +154,7 @@ def test_next_plumbing_inherits_must_from_dependent(home, capsys) -> None:
     infra = add_feature(title="Auth plumbing", layer="foundation")      # F1, no reqs
     app, _rid = feature_with_requirement("Payments", "core", "Pay by card", "must")
     search, _rid2 = feature_with_requirement("Search", "core", "Find products", "should")
-    filler = add_feature(title="Polish", layer="growth")                # F4, could
+    filler = add_feature(title="Polish", layer="growth", infra=True)   # F4, could
     con = store.connect()
     try:
         link_feature_dependency(con, "shop", app, infra)   # app needs the plumbing
@@ -180,3 +180,61 @@ def ready_lines(capsys) -> list[str]:
     if "blocked:" in body:
         body = body.split("blocked:")[0]
     return [line for line in body.splitlines() if line.strip() and "…" not in line]
+
+
+# ----------------------------------------------------------------- unplanned (DOC5 2.7)
+def test_a_feature_with_nothing_behind_it_is_listed_apart_not_ready(home, capsys) -> None:
+    make_project()
+    feature_with_requirement("Payments", "core", "Pay by card", "must")         # F1
+    rollup = add_feature(title="Everything about money", layer="foundation")    # F2: no R, S, paths
+    rc, out, err = cli(capsys, "next")
+    assert rc == 0, err
+    assert out.splitlines()[0] == "next (shop): 1 ready, 0 blocked, 1 unplanned"
+    ready = [line.split()[0] for line in out.splitlines()[1:] if line.startswith("F")]
+    assert ready == ["F1"]
+    assert out.splitlines()[-1].startswith("unplanned (")
+    assert out.splitlines()[-1].endswith(f": F{rollup}")
+
+
+def test_a_path_a_spec_or_infra_keeps_a_feature_in_the_queue(home, capsys) -> None:
+    make_project()
+    with_paths = add_feature(title="Has code", layer="core", paths="src/pay")
+    infra = add_feature(title="Plain plumbing", layer="core", infra=True)
+    spec_only = add_feature(title="Has a spec", layer="core")
+    from _helpers import add_spec, link_feature_spec
+    con = store.connect()
+    try:
+        link_feature_spec(con, "shop", spec_only, add_spec())
+    finally:
+        con.close()
+    rc, out, err = cli(capsys, "next")
+    assert rc == 0, err
+    assert out.splitlines()[0] == "next (shop): 3 ready, 0 blocked"
+    assert "unplanned" not in out
+    assert {line.split()[0] for line in out.splitlines()[1:]} == {
+        f"F{with_paths}", f"F{infra}", f"F{spec_only}"}
+
+
+def test_unplanned_does_not_release_what_waits_for_it(home, capsys) -> None:
+    make_project()
+    hollow = add_feature(title="Hollow base", layer="foundation")
+    app, _rid = feature_with_requirement("Payments", "core", "Pay by card", "must")
+    # a feature another one waits for is plumbing: it stays in the queue ...
+    con = store.connect()
+    try:
+        link_feature_dependency(con, "shop", app, hollow)
+    finally:
+        con.close()
+    rc, out, err = cli(capsys, "next")
+    assert rc == 0 and "unplanned" not in out
+    assert f"waiting on F{hollow} (planned)" in out
+
+
+def test_unplanned_respects_limit(home, capsys) -> None:
+    make_project()
+    ids = [add_feature(title=f"Hollow {n}", layer="core") for n in range(3)]
+    rc, out, err = cli(capsys, "next", "--limit", "2")
+    assert rc == 0, err
+    assert out.splitlines()[0] == "next (shop): 0 ready, 0 blocked, 3 unplanned"
+    assert "nothing ready" in out
+    assert out.splitlines()[-1].endswith(f"F{ids[0]}, F{ids[1]} \u2026 and 1 more")

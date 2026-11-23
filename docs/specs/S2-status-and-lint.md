@@ -40,15 +40,19 @@ Reject unknown or retired IDs in links and `superseded_by`; invalid transitions;
 | feature_without_requirement | F# | `planned` or later, no requirement, not `infra` | Warning |
 | at_risk | R#, F# | A dependency is blocked or cut | Warning |
 | dependency_cycle | F#, R#, S# | Cycle in dependency edges | Error |
-| broken_reference | PRD, DOC | Mention of an ID that does not exist or is retired | Error |
+| broken_reference | PRD, DOC, R#/F#/S# body | Mention of an ID that does not exist or is retired | Error |
 | cut_with_open_requirements | F# | `cut` while its requirements are not `dropped` or reassigned | Error |
 | orphan_doc | DOC# | `current` with no link | Warning |
 | doc_drift | DOC# | `body_ref` content hash differs from the stored hash | Warning |
+| thin_summary | S#, DOC#, F# | The one-line `summary` / `description` restates the title, is an import placeholder (`Imported ... (legacy)`), is only a file path, or is under 4 words | Warning |
+| status_in_body | R#, F#, S#, DOC# | A `Status:` line in a body (outside code fences): state lives in the row's status field | Warning |
 | uncovered_path | project | Code directory or document no F#/S# `paths` entry covers (opt-in `--coverage`) | Info |
 
 `lint` exits non-zero when any Error is present.
 
 ## 4. Derived values
+
+`next` lists a `planned` or `in_progress` feature as ready only when something stands behind it: a requirement, a spec, a code path, `infra`, or another feature that needs it. A feature with none of these is printed apart as `unplanned` (and never counted as ready); it still blocks whatever waits for it.
 
 | Value | Definition |
 |---|---|

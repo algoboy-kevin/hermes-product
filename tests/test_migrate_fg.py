@@ -455,9 +455,13 @@ def test_migrate_lint_has_zero_errors_and_only_feature_warnings(
     rc, out, err = cli(capsys, "lint", "--json", "--project", "gmd")
     payload = json.loads(out)
     assert payload["errors"] == 0
-    assert payload["warnings"] == 5
-    assert {finding["flag"] for finding in payload["findings"]} == {
-        "feature_without_requirement"}
+    by_flag: dict = {}
+    for finding in payload["findings"]:
+        by_flag[finding["flag"]] = by_flag.get(finding["flag"], 0) + 1
+    # the migrated specs carry the importer's "Imported ... (legacy)" summaries: the
+    # thin_summary lint now says so, which is exactly what it is for
+    assert by_flag == {"feature_without_requirement": 5, "thin_summary": 2}
+    assert payload["warnings"] == 7
     assert rc == 0, err
 
 

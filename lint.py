@@ -28,9 +28,10 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import code_coverage, graph, model, scan, store
+    from . import code_coverage, docs_text, graph, model, scan, store
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
+    import docs_text  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import scan  # type: ignore[no-redef]
@@ -183,10 +184,17 @@ def scan_project(project: str, con=None) -> dict:
             doc_ref = f"DOC{doc_row['id']}"
             problems.extend((doc_ref, problem)
                             for problem in scan.check_references(refs, resolver))
+        for ref, text in entity_bodies(con, project):
+            documents += 1
+            refs = scan.find_references(text)
+            references += len(refs)
+            problems.extend((ref, problem) for problem in scan.check_references(refs, resolver))
     finally:
         if own:
             con.close()
-    problems.sort(key=lambda pair: (int(pair[0][3:]), pair[1].line, pair[1].col))
+    problems.sort(key=lambda pair: (KIND_ORDER.get(_REF_RE.match(pair[0]).group(1), 9),
+                                    int(_REF_RE.match(pair[0]).group(2)),
+                                    pair[1].line, pair[1].col))
     return {"documents": documents, "references": references, "problems": problems}
 
 
@@ -229,6 +237,24 @@ def _coverage_entries(facts: dict) -> dict[str, list[str]]:
     return entries
 
 
+#: the kinds that carry a row body, with the state in which an entry is retired (S2 keeps
+#: retired entries out of the checks)
+_BODY_TABLES = (("requirement", "R", "dropped"), ("feature", "F", "cut"),
+                ("spec", "S", "superseded"))
+
+
+def entity_bodies(con, project: str) -> list[tuple[str, str]]:
+    """``[(ref, text), ...]`` of every live R#/F#/S# that has a body, kind then id order."""
+    found: list[tuple[str, str]] = []
+    for table, prefix, retired in _BODY_TABLES:
+        for row in con.execute(
+                f"SELECT id, status, body FROM {table} WHERE project = ? AND body IS NOT NULL"
+                " ORDER BY id", (project,)):
+            if row["status"] != retired and row["body"].strip():
+                found.append((f"{prefix}{row['id']}", row["body"]))
+    return found
+
+
 def load_facts(con, project: str, *, coverage: bool = False) -> dict:
     """Everything ``check`` needs, read-only from the store (and the body files).
 
@@ -256,6 +282,7 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
         "history": [dict(row) for row in con.execute(_HISTORY_SQL, (project,))],
         "doc_problems": [],
         "doc_drift": [],
+        "bodies": [],                 # (ref, text) of every live body: DOC files, R#/F#/S# rows
     }
     buckets = {
         "requirement": "requirements",
@@ -280,8 +307,13 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
         if text is None:
             continue
         doc_ref = f"DOC{doc_row['id']}"
+        facts["bodies"].append((doc_ref, text))
         facts["doc_problems"].extend(
             (doc_ref, problem) for problem in scan.scan_text(text, resolver))
+    for ref, text in entity_bodies(con, project):
+        facts["bodies"].append((ref, text))
+        facts["doc_problems"].extend(
+            (ref, problem) for problem in scan.scan_text(text, resolver))
     if coverage:
         project_row = store.get_project(project, con=con) or {}
         root = project_row.get("root")
@@ -331,7 +363,64 @@ def check(facts: dict) -> list[Finding]:
         rendered = scan.format_problem("", problem)[1:]        # drop the leading colon
         findings.append(Finding("broken_reference", "error", doc_ref, f"line {rendered}"))
     findings += _coverage_findings(facts.get("coverage"))
+    for spec in specs:
+        findings += _thin_findings(f"S{spec['id']}", spec, "summary", spec["status"] == "superseded")
+    for doc_row in docs:
+        findings += _thin_findings(f"DOC{doc_row['id']}", doc_row, "summary",
+                                   doc_row["status"] == "superseded")
+    for feature in features:
+        findings += _thin_findings(f"F{feature['id']}", feature, "description",
+                                   feature["status"] == "cut")
+    for ref, text in facts.get("bodies") or []:
+        for number, line in docs_text.status_lines(text):
+            findings.append(Finding(
+                "status_in_body", "warning", ref,
+                f"line {number}: {_clip(line)!r} states a status in text; state lives in the"
+                " row's status field"))
     return sorted(findings, key=_sort_key)
+
+
+_PLACEHOLDER_RE = re.compile(r"^(imported|migrated)\b|\(legacy\)|\blegacy import\b",
+                             re.IGNORECASE)
+_PATHISH_RE = re.compile(r"^\S+\.(md|go|py|ya?ml|txt|rst|json|toml)$|^[\w.-]+(/[\w.-]+)+/?$",
+                         re.IGNORECASE)
+#: fewer words than this cannot say what an entry decides
+MIN_SUMMARY_WORDS = 4
+
+
+def thin_reason(title: Any, text: Any) -> Optional[str]:
+    """Why a one-line summary/description says nothing, or None when it is substantive.
+
+    Thin means it restates the title, is an import placeholder (``Imported spec
+    document X (legacy)``), is only a file path, or is too short to decide anything
+    (DOC5 section 2.2: a hollow row that passes validation looks the same as a
+    migrated one).
+    """
+    flat = " ".join(str(text or "").split())
+    if not flat:
+        return None                                    # empty is the field rule's business
+    if flat.casefold().rstrip(".") == " ".join(str(title or "").split()).casefold().rstrip("."):
+        return "restates the title"
+    if _PLACEHOLDER_RE.search(flat):
+        return "is an import placeholder"
+    if _PATHISH_RE.match(flat):
+        return "is only a file path"
+    if len(flat.split()) < MIN_SUMMARY_WORDS:
+        return f"is {len(flat.split())} word(s); say what it decides"
+    return None
+
+
+def _thin_findings(ref: str, row: dict, field: str, retired: bool) -> list[Finding]:
+    if retired:
+        return []
+    reason = thin_reason(row.get("title"), row.get(field))
+    if reason is None:
+        return []
+    return [Finding("thin_summary", "warning", ref, f"{field} {reason}")]
+
+
+def _clip(text: str, width: int = 60) -> str:
+    return text if len(text) <= width else text[: width - 1] + "\u2026"
 
 
 def _coverage_findings(report: Optional[dict]) -> list[Finding]:

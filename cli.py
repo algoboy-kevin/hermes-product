@@ -1013,10 +1013,18 @@ def _cmd_next(args: argparse.Namespace) -> int:
         priorities = plan.effective_priority(status_by_id, req_priority, needs_map)
         for item in items:
             item["priority"] = priorities[item["id"]]
-        ready, blocked = plan.ready_and_blocked(items, mandatory, status_by_id)
+        candidates = [item for item in items if item["status"] in ("planned", "in_progress")]
+        needed = {needs_id for _row_id, needs_id, _optional in edges}
+        unplanned = [item for item in candidates if plan.is_unplanned(item, needed)]
+        hidden = {item["id"] for item in unplanned}
+        ready, blocked = plan.ready_and_blocked(
+            [item for item in items if item["id"] not in hidden], mandatory, status_by_id)
     finally:
         con.close()
-    print(f"next ({project}): {len(ready)} ready, {len(blocked)} blocked")
+    tally = f"{len(ready)} ready, {len(blocked)} blocked"
+    if unplanned:
+        tally += f", {len(unplanned)} unplanned"
+    print(f"next ({project}): {tally}")
     if ready:
         for item in ready[: args.limit]:
             print(_line_feature(item))
@@ -1030,6 +1038,11 @@ def _cmd_next(args: argparse.Namespace) -> int:
             print(f"{_line_feature(item)}{SEP}{reason}")
         if len(blocked) > args.limit:
             print(f"  \u2026 and {len(blocked) - args.limit} more")
+    if unplanned:
+        shown = ", ".join(item["ref"] for item in unplanned[: args.limit])
+        more = f" \u2026 and {len(unplanned) - args.limit} more" if len(unplanned) > args.limit else ""
+        print(f"unplanned (no requirement, spec or paths; link one, set paths, mark infra or"
+              f" cut): {shown}{more}")
     return EXIT_OK
 
 

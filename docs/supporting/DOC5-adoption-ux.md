@@ -1,6 +1,6 @@
 # v-next input: adoption UX and the entity body model
 
-Status: draft input for the next version. Nothing here is decided; section 6 lists what needs the
+This is draft input for the next version. Nothing here is decided; section 6 lists what needs the
 owner's ruling.
 
 Evidence base: the go-mm-driver (`gmd`) migration run on 2026-11-23, done end to end against this

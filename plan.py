@@ -89,6 +89,28 @@ def effective_priority(features: Iterable[int],
     return effective
 
 
+def is_unplanned(row: dict, needed_by: Iterable[int] = ()) -> bool:
+    """A candidate feature that advertises work it cannot show: no requirement, no spec,
+    no code path, not marked ``infra`` and not needed by any other feature.
+
+    A feature another one waits for is plumbing in the build order (it inherits that
+    feature's priority), so it stays in the queue whether or not it is marked ``infra``.
+
+    Such a row (a rollup or a placeholder) passes validation and used to top `next`;
+    it is listed apart as ``unplanned`` instead, so the ready queue only holds work that
+    is traceable to something (DOC5 section 2.7).
+    """
+    if row.get("infra") or row.get("id") in set(needed_by):
+        return False
+    links = row.get("links") or {}
+    if links.get("requirements") or links.get("specs"):
+        return False
+    raw = row.get("paths")
+    if raw not in (None, "", "[]"):
+        return False
+    return True
+
+
 def ready_and_blocked(features: Iterable[dict], mandatory_needs: dict,
                       status_by_id: dict) -> tuple[list[dict], list[tuple[dict, str]]]:
     """Split candidate features into (ready, blocked); blocked pairs carry a reason.
