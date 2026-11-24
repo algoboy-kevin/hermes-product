@@ -725,11 +725,14 @@ function Card({ entry, kind, onSelect, onTogglePin }) {
         ? h("span", {
           // which document IS the PRD, now that the PRD has no tab of its own
           "data-testid": "card-prd",
-          // same pill as the state chip beside it — same radius, padding and size; only the
-          // colour and the label differ, so the row reads as one row of facts
+          // same pill as the state chip beside it — same radius, padding, size and dot; only
+          // the colour and the label differ, so the row reads as one row of facts
           className: "inline-flex items-center gap-1 rounded-full bg-(--ui-bg-quaternary) px-1.5 py-px text-[0.625rem] font-medium",
           style: { color: "#eab308" }
-        }, "PRD")
+        },
+          // the same 6px dot the state chip carries, in the badge's own colour
+          h("span", { style: { width: 6, height: 6, borderRadius: 999, background: "#eab308", display: "inline-block" } }),
+          "PRD")
         : null),
 
     h("div", { className: "line-clamp-2 text-xs font-semibold leading-snug" }, entry.title || entry.ref),
