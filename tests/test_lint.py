@@ -365,6 +365,7 @@ def test_a12_no_criteria_is_an_error_and_exit_is_non_zero(home, con, capsys) -> 
         "error no_criteria R1  in_progress with no criterion\n"
         "warning orphan_requirement R1  in_progress with no linked feature\n"
         "warning unspecified R1  in_progress with no linked spec\n"
+        "info no_card_links project  no kanban cards linked; put a \"product: F# R#\" line in each card body and run: product sync --board SLUG --apply\n"
         "not yet checked: uncovered_path\n"
     )
 
@@ -378,6 +379,7 @@ def test_a13_orphan_requirement_is_a_warning_and_exit_is_zero(home, con, capsys)
     assert out == (
         "lint (shop): 0 errors, 1 warnings\n"
         "warning orphan_requirement R1  approved with no linked feature\n"
+        "info no_card_links project  no kanban cards linked; put a \"product: F# R#\" line in each card body and run: product sync --board SLUG --apply\n"
         "not yet checked: uncovered_path\n"
     )
 
@@ -404,7 +406,9 @@ def test_json_output_is_one_sorted_object(home, con, capsys) -> None:
         "errors": 0,
         "warnings": 1,
         "findings": [{"flag": "orphan_requirement", "severity": "warning",
-                      "ref": "R1", "message": "approved with no linked feature"}],
+                      "ref": "R1", "message": "approved with no linked feature"},
+                     {"flag": "no_card_links", "severity": "info", "ref": "project",
+                      "message": ('no kanban cards linked; put a "product: F# R#" line in each card body and run: product sync --board SLUG --apply')}],
         "not_yet": ["uncovered_path"],
     }
     assert out == json.dumps(payload, sort_keys=True) + "\n"
@@ -454,4 +458,5 @@ def test_lint_reads_the_store_through_run(home, con, capsys) -> None:
     findings = lint.run("shop")
     assert [(finding.flag, finding.ref) for finding in findings] == [
         ("feature_without_requirement", "F1"),
+        ("no_card_links", "project"),
     ]

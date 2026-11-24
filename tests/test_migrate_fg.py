@@ -461,7 +461,8 @@ def test_migrate_lint_has_zero_errors_and_only_feature_warnings(
     # the migrated specs carry the importer's "Imported ... (legacy)" summaries: the
     # thin_summary lint now says so, which is exactly what it is for; and they stay
     # `draft` next to the imported shipped features, which spec_behind (HP-25) reports
-    assert by_flag == {"feature_without_requirement": 5, "thin_summary": 2, "spec_behind": 2}
+    assert by_flag == {"feature_without_requirement": 5, "thin_summary": 2, "spec_behind": 2,
+                       "no_card_links": 1}
     assert payload["warnings"] == 9
     assert rc == 0, err
 

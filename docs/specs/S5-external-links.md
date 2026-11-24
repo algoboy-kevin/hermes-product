@@ -18,3 +18,4 @@
 - A requirement may move to `done` only through its criteria ([S2](S2-status-and-lint.md)).
 - A card moved backward after its entry is `verified` raises a warning instead of changing data.
 - A card links to entries by ID in its body (`product: F7, S12`); `sync` proposes the link rows from those lines and applies them only on request.
+- `lint` reminds with one project-level Info (`no_card_links`) when an entry is `approved` or later and no kanban card is linked.

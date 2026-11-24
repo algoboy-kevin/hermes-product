@@ -63,6 +63,17 @@ _HISTORY_SQL = (
 #: the kinds with a dependency table, and the display prefix used in messages
 _DEPENDENCY_LABEL = {"feature": "F", "requirement": "R", "spec": "S"}
 
+#: the states in which a requirement or feature has already asked for work (HP-26)
+_WORK_REQUESTED = {
+    "requirement": ("approved", "in_progress", "done"),
+    "feature": ("planned", "in_progress", "shipped"),
+}
+
+#: the one project-level message telling a reader to put a card on the work
+_NO_CARD_LINKS_MESSAGE = (
+    'no kanban cards linked; put a "product: F# R#" line in each card body'
+    " and run: product sync --board SLUG --apply")
+
 #: a dependent in one of these states can be at risk from its dependency
 _AT_RISK_STATES = {
     "feature": ("planned", "in_progress"),
@@ -269,6 +280,9 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
     ``coverage=True`` adds one more fact, ``coverage``: the ``code_coverage``
     report for the project's root, with every live F#/S# ``paths`` claim as an
     entry. It needs a real root directory, so a project without one raises.
+
+    ``kanban_links`` is the count of ``external_link`` rows whose system is
+    ``kanban``: the only rows that join a store entry to a card (HP-26).
     """
     items = store.list_entities(project, con=con)      # R, F, S, A, DOC with links
     facts: dict[str, Any] = {
@@ -283,6 +297,9 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
         "doc_problems": [],
         "doc_drift": [],
         "bodies": [],                 # (ref, text) of every live body: DOC files, R#/F#/S# rows
+        "kanban_links": con.execute(
+            "SELECT COUNT(*) AS n FROM external_link WHERE project = ? AND system = 'kanban'",
+            (project,)).fetchone()["n"],
     }
     buckets = {
         "requirement": "requirements",
@@ -364,6 +381,7 @@ def check(facts: dict) -> list[Finding]:
         rendered = scan.format_problem("", problem)[1:]        # drop the leading colon
         findings.append(Finding("broken_reference", "error", doc_ref, f"line {rendered}"))
     findings += _coverage_findings(facts.get("coverage"))
+    findings += _card_link_findings(facts)
     for spec in specs:
         findings += _thin_findings(f"S{spec['id']}", spec, "summary", spec["status"] == "superseded")
     for doc_row in docs:
@@ -446,6 +464,25 @@ def _coverage_findings(report: Optional[dict]) -> list[Finding]:
             findings.append(Finding("uncovered_path", "info", "project",
                                     f"and {hidden} more uncovered {label}"))
     return findings
+
+
+def _card_link_findings(facts: dict) -> list[Finding]:
+    """no_card_links: work was asked for and no kanban card is linked (PURE, HP-26).
+
+    One project-level Info. It fires only when the store says the questions were
+    asked — an ``approved``/``in_progress``/``done`` R# or a ``planned`` or later
+    F#, with ``cut`` never counting — and no ``external_link`` row has system
+    ``kanban``. A facts dict without the ``kanban_links`` key means unknown (an
+    older caller, a hand-built dict): no finding, never an assumption of zero.
+    """
+    count = facts.get("kanban_links")
+    if count is None or int(count) > 0:
+        return []
+    if not any(row.get("status") in _WORK_REQUESTED[kind]
+               for kind, bucket in (("requirement", "requirements"), ("feature", "features"))
+               for row in facts.get(bucket) or ()):
+        return []
+    return [Finding("no_card_links", "info", "project", _NO_CARD_LINKS_MESSAGE)]
 
 
 def _requirement_findings(requirement: dict, own_criteria: list[dict]) -> list[Finding]:

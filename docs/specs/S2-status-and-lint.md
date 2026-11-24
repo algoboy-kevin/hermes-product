@@ -48,6 +48,7 @@ Reject unknown or retired IDs in links and `superseded_by`; invalid transitions;
 | thin_summary | S#, DOC#, F# | The one-line `summary` / `description` restates the title, is an import placeholder (`Imported ... (legacy)`), is only a file path, or is under 4 words | Warning |
 | status_in_body | R#, F#, S#, DOC# | A `Status:` line in a body (outside code fences): state lives in the row's status field | Warning |
 | uncovered_path | project | Code directory or document no F#/S# `paths` entry covers (opt-in `--coverage`) | Info |
+| no_card_links | project | An `approved` or later R# or `planned` or later F#, and no `kanban` external link | Info |
 
 `lint` exits non-zero when any Error is present.
 
