@@ -16,7 +16,10 @@ module is the whole verb:
   entry warns instead of moving it (A20);
 * with ``--apply``: all new link rows in ONE transaction, then each move through
   ``store.update_entity`` so every S2 exit condition applies. A refused move is
-  reported and does not stop the others or undo the links.
+  reported and does not stop the others or undo the links;
+* the report ends with a read-only ``reconcile`` block: every card of a feature
+  or requirement is finished but the owner still has to ship it or run its
+  criteria. It names that step and moves nothing.
 
 Dry run is the default. The CLI (``cli._cmd_sync``) only parses and prints; the
 output lines are built here, in the documented order.
@@ -61,6 +64,12 @@ CHAIN: Mapping[str, tuple[str, ...]] = {"spec": ("draft", "approved", "implement
 VERIFIED_MESSAGE = ("nothing maps to verified: that status comes only from criteria"
                     " with evidence")
 MAP_TARGETS = ("approved", "in_progress", "implemented")
+
+#: kinds the read-only ``reconcile`` block speaks about (a card finishes; the owner acts)
+RECONCILE_KINDS = ("requirement", "feature")
+
+#: criterion statuses that ask the owner for nothing more
+CRITERION_CLOSED = ("passed", "waived")
 
 
 def parse_map(pairs: Iterable[str]) -> dict[str, Optional[str]]:
@@ -120,6 +129,51 @@ def _read_boards(boards: Sequence[str]) -> list[tuple[str, list]]:
     return board_cards
 
 
+def reconcile_lines(entries: Sequence[Mapping]) -> list[str]:
+    """The read-only ``reconcile`` block: the cards are finished, the entry is not.
+
+    Report only — nothing here moves a status or writes a row. *entries* is the
+    data ``sync`` already gathered, one mapping per linked entry:
+    ``{kind, entity_id, status, cards, criteria}`` where ``cards`` holds
+    ``(mapped execution status or None, board, card id, column)`` in read order
+    and ``criteria`` the statuses of a requirement's criteria (empty for a
+    feature). A card whose column maps to nothing (``archived``) is ignored, not
+    counted as open.
+
+    A *feature* prints when every card maps to ``implemented`` and the status is
+    below ``shipped`` (``sync`` never ships one, so the owner decides). A
+    *requirement* prints when every tracking card maps to ``implemented`` and one
+    criterion is neither ``passed`` nor ``waived``. Entries with an open card
+    print nothing; the lines follow the REF order of the link lines.
+    """
+    lines: list[str] = []
+    for entry in sorted(entries, key=lambda one: (KIND_ORDER[one["kind"]],
+                                                  one["entity_id"])):
+        kind, status = entry["kind"], entry["status"]
+        if kind not in RECONCILE_KINDS:
+            continue                      # a card can finish a spec; only F/R lag
+        cards = [one for one in entry["cards"] if one[0] is not None]
+        if not cards or any(one[0] != "implemented" for one in cards):
+            continue                      # at least one card is still open
+        ref = f"{PREFIX[kind]}{entry['entity_id']}"
+        count = len(cards)
+        if kind == "feature":
+            chain = CHAIN["feature"]
+            if status not in chain or chain.index(status) >= chain.index("shipped"):
+                continue                  # already shipped (or cut): nothing to do
+            lines.append(f"reconcile {ref}  {status}, {count}/{count} cards done:"
+                         " ready to ship? (owner decides)")
+            continue
+        criteria = list(entry["criteria"])
+        if all(one in CRITERION_CLOSED for one in criteria):
+            continue                      # no criterion left to run
+        passed = sum(1 for one in criteria if one == "passed")
+        lines.append(f"reconcile {ref}  tracked by {count}"
+                     f" card{'' if count == 1 else 's'}, all done;"
+                     f" criteria {passed}/{len(criteria)} passed: run the criteria")
+    return lines
+
+
 def sync(project: str, boards: Sequence[str], *, overrides: Iterable[str] = (),
          apply: bool = False) -> dict:
     """Propose (and with ``apply``, write) the links and execution moves.
@@ -141,6 +195,7 @@ def sync(project: str, boards: Sequence[str], *, overrides: Iterable[str] = (),
     link_rows: list[tuple] = []          # (kind, entity_id, board, card_id)
     unresolved: list[str] = []
     entry_cards: dict[tuple[str, int], list[tuple]] = {}
+    all_cards: dict[tuple[str, int], list[tuple]] = {}
     con = store.connect()
     try:
         for board, cards in board_cards:
@@ -159,6 +214,10 @@ def sync(project: str, boards: Sequence[str], *, overrides: Iterable[str] = (),
                         continue
                     kind, entity_id = resolved
                     link_rows.append((kind, entity_id, board, card.id))
+                    # every card of the entry, mapped or not: the reconcile block
+                    # needs R and A too, and must see an archived card as ignored
+                    all_cards.setdefault((kind, entity_id), []).append(
+                        (mapped, board, card.id, card.status))
                     if kind in EXECUTION_KINDS and mapped is not None:
                         entry_cards.setdefault((kind, entity_id), []).append(
                             (kanban_reader.STAGE_ORDER[mapped], mapped, board,
@@ -235,9 +294,27 @@ def sync(project: str, boards: Sequence[str], *, overrides: Iterable[str] = (),
                                     f"  refused: {exc}")
                 continue
             status_lines.append(f"status {ref}  {current} -> {target}  applied")
+
+        reconcile_entries: list[dict] = []
+        for (kind, entity_id), cards in sorted(
+                all_cards.items(), key=lambda item: (KIND_ORDER[item[0][0]], item[0][1])):
+            if kind not in RECONCILE_KINDS:
+                continue
+            status = _row_status(con, project, kind, entity_id)   # after any move
+            if status is None:            # pragma: no cover - resolved above
+                continue
+            criteria: list[str] = []
+            if kind == "requirement":
+                criteria = [row["status"] for row in con.execute(
+                    "SELECT status FROM criterion WHERE project = ? AND requirement_id = ?"
+                    " ORDER BY id", (project, entity_id))]
+            reconcile_entries.append({"kind": kind, "entity_id": entity_id,
+                                      "status": status, "cards": cards,
+                                      "criteria": criteria})
     finally:
         con.close()
 
-    lines = [*link_lines, *status_lines, *warning_lines, *sorted(unresolved)]
+    lines = [*link_lines, *status_lines, *warning_lines, *sorted(unresolved),
+             *reconcile_lines(reconcile_entries)]
     return {"project": project, "boards": len(unique_boards), "cards": cards_read,
             "with_lines": with_lines, "lines": lines, "conflicts": conflicts}

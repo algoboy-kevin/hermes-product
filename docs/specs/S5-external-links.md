@@ -19,3 +19,6 @@
 - A card moved backward after its entry is `verified` raises a warning instead of changing data.
 - A card links to entries by ID in its body (`product: F7, S12`); `sync` proposes the link rows from those lines and applies them only on request.
 - `lint` reminds with one project-level Info (`no_card_links`) when an entry is `approved` or later and no kanban card is linked.
+- `sync` ends with a read-only `reconcile` block: a feature whose linked cards all map to `implemented` while its status is below `shipped` prints `reconcile F13  in_progress, 3/3 cards done: ready to ship? (owner decides)`.
+- A requirement whose tracking cards all map to `implemented` and that still has a criterion neither `passed` nor `waived` prints `reconcile R24  tracked by 3 cards, all done; criteria 0/9 passed: run the criteria`.
+- The block writes nothing and adds no status: it names the owner's next step. An entry with an open card, and a card whose column maps to nothing, print nothing.
