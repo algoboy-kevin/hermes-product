@@ -38,10 +38,10 @@ import {
   EmptyState,
   ErrorState,
   Loader,
+  MessageTextContent,
   PALETTE_AREA,
   ROUTES_AREA,
   SIDEBAR_NAV_AREA,
-  Streamdown,
   WORKSPACE_PAGE_HEADER_AREA,
   cn,
   host
@@ -919,7 +919,7 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
                     maxHeight: 420, overflow: "auto", border: "1px solid " + UI.stroke,
                     borderRadius: 6, padding: "6px 10px", fontSize: 12
                   }
-                }, h(Streamdown, null, body.text)),
+                }, h(MessageTextContent, { text: body.text })),
                 body.truncated
                   ? h("p", { "data-testid": "body-truncated", style: mutedText },
                     "Showing the first " + body.text.length + " of " + body.total
@@ -1194,7 +1194,7 @@ function ProductPage({ ctx }) {
         // The PRD is the one view that is long-form prose: give it a centred reading column
         // with real gutters instead of letting the markdown run flush to the panel edge.
         return h("div", { "data-testid": "prd-reader", style: PRD_READER },
-          h(Streamdown, null, prdOne.markdown))
+          h(MessageTextContent, { text: prdOne.markdown }))
       }
       return h(EmptyState, {
         title: "No PRD yet",

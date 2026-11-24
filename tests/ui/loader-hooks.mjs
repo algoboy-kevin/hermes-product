@@ -60,6 +60,7 @@ const SDK_SOURCE = [
   'export const PopoverContent = tag("PopoverContent")',
   'export const PopoverTrigger = tag("PopoverTrigger")',
   'export const Streamdown = tag("Streamdown")',
+  'export const MessageTextContent = tag("MessageTextContent")',
   'export const Switch = tag("Switch")',
   'export const ROUTES_AREA = "routes"',
   'export const SIDEBAR_NAV_AREA = "sidebar.nav"',

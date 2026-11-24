@@ -310,7 +310,10 @@ globalThis.__productUIKit = {
     { "data-testid": "error-state", message: props.message || props.description || props.title },
     props.title, props.message || props.description),
   Loader: () => createElement("div", { "data-testid": "loader" }),
-  Streamdown: (props) => createElement("div", { "data-testid": "markdown" }, props.children),
+  // The page renders markdown through the SDK's chat renderer (MessageTextContent),
+  // which takes `text` — the stub keeps the markdown text on the same testid so the
+  // existing "does the text reach the renderer" checks still mean something.
+  MessageTextContent: (props) => createElement("div", { "data-testid": "markdown" }, props.text),
   cn: (...parts) => parts.filter(Boolean).join(" "),
   host: hostStub
 }
@@ -646,7 +649,7 @@ check(!calls().some((call) => call.path.startsWith("/project/mobile")),
 // -- A28 landing on the PRD ---------------------------------------------------
 check(one("markdown") !== undefined, "A28: the page opens on the PRD view")
 const prdText = text(one("markdown"))
-check(prdText.includes("# Brief"), "A28: the PRD markdown reaches the Streamdown renderer")
+check(prdText.includes("# Brief"), "A28: the PRD markdown reaches the chat markdown renderer")
 check(prdText.includes("| a | b |"), "A28: tables survive to the renderer")
 check(tabs().length === 0, "A28: no status tabs on the PRD view")
 check(matches("/project/shop/prd").length === 1, "A28: the PRD is fetched once")
