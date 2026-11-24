@@ -1103,7 +1103,13 @@ function DocModal({ detail, loading, error, onClose, loadBody }) {
           detail ? h("h2", { style: { fontSize: 22, fontWeight: 650, lineHeight: 1.25, margin: "0 0 14px" } }, title) : null,
           body.state === "loading" || body.state === "idle" ? h(Loader, null) : null,
           body.state === "error"
-            ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
+            ? h("div", null,
+              h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error }),
+              // A 404 here usually means the desktop backend predates this page: the page is
+              // read from disk on every load, the plugin's Python API only at startup.
+              h("p", { style: { ...mutedText, marginTop: 10 } },
+                "If this page was just updated, quit and reopen Hermes — the plugin API is read "
+                + "at startup, so a long-running backend can be older than the page."))
             : null,
           body.state === "ready"
             ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
