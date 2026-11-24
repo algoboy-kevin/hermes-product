@@ -790,68 +790,24 @@ const formatLinks = (links) => {
 }
 
 /** The docked detail panel: fields, links, doc summaries, history, the edit command (A33). */
-function DetailPanel({ detail, loading, error, onClose, loadBody }) {
-  const [copied, setCopied] = useState(false)
-  const command = (detail && detail.command) || ""
-  const [body, setBody] = useState({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
-  const ref = (detail && detail.ref) || ""
-  // a new entry starts with its body closed: the text is read only when asked for
-  useEffect(() => {
-    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
-  }, [ref])
-  const showBody = () => {
-    if (!loadBody || !ref) return
-    setBody((previous) => ({ ...previous, state: "loading", error: "" }))
-    Promise.resolve(loadBody(ref))
-      .then((payload) => setBody({
-        state: "ready",
-        text: (payload && payload.text) || "",
-        truncated: Boolean(payload && payload.truncated),
-        total: (payload && payload.total) || 0,
-        command: (payload && payload.command) || "",
-        error: ""
-      }))
-      .catch((failure) => setBody({
-        state: "error", text: "", truncated: false, total: 0, command: "", error: errorMessage(failure)
-      }))
-  }
-  const hideBody = () =>
-    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+function metaSection(label, content) {
+  return h("div", { style: { marginBottom: 14 } },
+    h("div", { style: sectionLabel }, label),
+    content)
+}
 
-  // A document is read, not inspected. A DOC (or anything with a body) opens a two-pane
-  // reader: metadata rail on the left, the markdown itself on the right, loaded on open.
-  // Everything else keeps the narrow column and its Show body toggle.
-  const reader = Boolean(detail && detail.body_chars > 0 && detail.kind === "doc")
-
-  useEffect(() => {
-    if (!reader || !showBody) return
-    if (body.state === "idle") showBody()
-  }, [ref, reader, body.state])
-
-  const copy = () => {
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard) {
-        navigator.clipboard.writeText(command)
-      }
-      setCopied(true)
-    } catch (failure) {
-      setCopied(false)
-    }
-  }
-
-  const section = (label, content) =>
-    h("div", { style: { marginBottom: 14 } },
-      h("div", { style: sectionLabel }, label),
-      content)
-
+/**
+ * The metadata column shared by the side panel and the document modal: title, fields, links,
+ * linked documents, history and the CLI that edits the entry.
+ */
+function EntryMeta({ detail, command, copy, copied }) {
   const fields = detail && detail.fields ? Object.entries(detail.fields) : []
   const links = formatLinks(detail && detail.links)
   const docs = (detail && detail.docs) || []
   const history = (detail && detail.history) || []
+  const section = metaSection
 
-  // Built only for a loaded detail: the column reads detail.fields/detail.ref directly,
-  // and the panel renders while the fetch is still in flight.
-  const metaColumn = detail ? h("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+  return h("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
 
         h("h3", { style: { fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 10 } },
           (detail.fields && (detail.fields.title || detail.fields.statement)) || detail.ref),
@@ -863,49 +819,6 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
                 h("span", { style: { ...sectionLabel, marginBottom: 0 } }, stateLabel(key)),
                 h("span", { style: { fontSize: 12, color: UI.text, wordBreak: "break-word" } },
                   fieldValue(value))))))
-          : null,
-
-        detail.body_chars > 0 && !reader
-          ? section("Body", h("div", { "data-testid": "body-section", style: { display: "flex", flexDirection: "column", gap: 6 } },
-            body.state === "idle"
-              ? h("button", {
-                type: "button",
-                "data-testid": "body-toggle",
-                onClick: showBody,
-                style: {
-                  alignSelf: "flex-start", border: "1px solid " + UI.stroke, borderRadius: 6,
-                  background: "transparent", color: UI.text, fontSize: 12, padding: "4px 10px", cursor: "pointer"
-                }
-              }, "Show body (" + bodySizeLabel(detail.body_chars) + ")")
-              : null,
-            body.state === "loading" ? h(Loader, null) : null,
-            body.state === "error"
-              ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
-              : null,
-            body.state === "ready"
-              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                h("div", {
-                  "data-testid": "body-text",
-                  style: {
-                    maxHeight: 420, overflow: "auto", border: "1px solid " + UI.stroke,
-                    borderRadius: 6, padding: "6px 10px", fontSize: 12
-                  }
-                }, h(MessageTextContent, { text: body.text })),
-                body.truncated
-                  ? h("p", { "data-testid": "body-truncated", style: mutedText },
-                    "Showing the first " + body.text.length + " of " + body.total
-                    + " characters. Read the rest with: " + body.command)
-                  : null,
-                h("button", {
-                  type: "button",
-                  "data-testid": "body-hide",
-                  onClick: hideBody,
-                  style: {
-                    alignSelf: "flex-start", border: 0, background: "transparent", color: UI.tertiary,
-                    fontSize: 11, padding: 0, cursor: "pointer"
-                  }
-                }, "Hide body"))
-              : null))
           : null,
 
         links.length
@@ -960,52 +873,106 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
               }
             }, h(Codicon, { name: copied ? "check" : "copy", size: "0.8rem" }))),
           h("p", { style: { ...mutedText, marginTop: 6 } },
-            "Read-only here by design: change the entry from the CLI above."))) : null
+            "Read-only here by design: change the entry from the CLI above."))
+  )
+}
 
-  // The reading pane: the document itself, already rendered by the chat markdown pipeline.
-  const bodyPane = detail && detail.body_chars > 0
-    ? h("div", { "data-testid": "body-pane", style: { flex: "1 1 440px", minWidth: 260, maxWidth: "100%" } },
-      body.state === "idle" || body.state === "loading" ? h(Loader, null) : null,
-      body.state === "error"
-        ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
-        : null,
-      body.state === "ready"
-        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          h("div", { "data-testid": "body-text" }, h(MessageTextContent, { text: body.text })),
-          body.truncated
-            ? h("p", { "data-testid": "body-truncated", style: mutedText },
-              "Showing the first " + body.text.length + " of " + body.total
-              + " characters. Read the rest with: " + body.command)
-            : null)
-        : null)
-    : null
+function DetailPanel({ detail, loading, error, onClose, loadBody }) {
+  const [copied, setCopied] = useState(false)
+  const command = (detail && detail.command) || ""
+  const [body, setBody] = useState({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+  const ref = (detail && detail.ref) || ""
+  // a new entry starts with its body closed: the text is read only when asked for
+  useEffect(() => {
+    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+  }, [ref])
+  const showBody = () => {
+    if (!loadBody || !ref) return
+    setBody((previous) => ({ ...previous, state: "loading", error: "" }))
+    Promise.resolve(loadBody(ref))
+      .then((payload) => setBody({
+        state: "ready",
+        text: (payload && payload.text) || "",
+        truncated: Boolean(payload && payload.truncated),
+        total: (payload && payload.total) || 0,
+        command: (payload && payload.command) || "",
+        error: ""
+      }))
+      .catch((failure) => setBody({
+        state: "error", text: "", truncated: false, total: 0, command: "", error: errorMessage(failure)
+      }))
+  }
+  const hideBody = () =>
+    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
 
-  const detailBody = detail
-    ? (reader
-      ? h("div", {
-        "data-testid": "detail-reader",
-        style: { display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }
-      },
-        h("div", {
-          "data-testid": "detail-meta",
-          style: { flex: "0 0 236px", minWidth: 200, maxWidth: 280 }
-        }, metaColumn),
-        bodyPane)
-      : metaColumn)
-    : null
+  const copy = () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        navigator.clipboard.writeText(command)
+      }
+      setCopied(true)
+    } catch (failure) {
+      setCopied(false)
+    }
+  }
+
+
+  const metaColumn = detail ? h(EntryMeta, { detail, command, copy, copied }) : null
+
+  const bodySection = detail && detail.body_chars > 0
+    ? metaSection("Body", h("div", { "data-testid": "body-section", style: { display: "flex", flexDirection: "column", gap: 6 } },
+            body.state === "idle"
+              ? h("button", {
+                type: "button",
+                "data-testid": "body-toggle",
+                onClick: showBody,
+                style: {
+                  alignSelf: "flex-start", border: "1px solid " + UI.stroke, borderRadius: 6,
+                  background: "transparent", color: UI.text, fontSize: 12, padding: "4px 10px", cursor: "pointer"
+                }
+              }, "Show body (" + bodySizeLabel(detail.body_chars) + ")")
+              : null,
+            body.state === "loading" ? h(Loader, null) : null,
+            body.state === "error"
+              ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
+              : null,
+            body.state === "ready"
+              ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+                h("div", {
+                  "data-testid": "body-text",
+                  style: {
+                    maxHeight: 420, overflow: "auto", border: "1px solid " + UI.stroke,
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12
+                  }
+                }, h(MessageTextContent, { text: body.text })),
+                body.truncated
+                  ? h("p", { "data-testid": "body-truncated", style: mutedText },
+                    "Showing the first " + body.text.length + " of " + body.total
+                    + " characters. Read the rest with: " + body.command)
+                  : null,
+                h("button", {
+                  type: "button",
+                  "data-testid": "body-hide",
+                  onClick: hideBody,
+                  style: {
+                    alignSelf: "flex-start", border: 0, background: "transparent", color: UI.tertiary,
+                    fontSize: 11, padding: 0, cursor: "pointer"
+                  }
+                }, "Hide body"))
+              : null))
+          : null
 
   return h("aside", {
     "data-testid": "detail-panel",
     "aria-label": "entry detail",
     style: {
-      width: reader ? "min(980px, 60vw)" : 380,
-      minWidth: reader ? 560 : 320,
-      maxWidth: reader ? "72vw" : "42vw",
+      width: 380,
+      minWidth: 320,
+      maxWidth: "42vw",
       flexShrink: 0,
       overflow: "auto",
       borderLeft: "1px solid " + UI.stroke,
       paddingLeft: 14,
-      paddingRight: reader ? 14 : 0,
       display: "flex",
       flexDirection: "column",
       gap: 4
@@ -1028,8 +995,138 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
     error ? h(ErrorState, { title: "The entry could not be loaded", message: error, description: error }) : null,
     loading && !detail ? h(Loader, null) : null,
 
-    detailBody)
+    metaColumn
+      ? h("div", { style: { display: "flex", flexDirection: "column", gap: 2 } }, metaColumn, bodySection)
+      : null)
 }
+
+/**
+ * The document reader, in the shape the kanban card modal uses: a centred dialog with the
+ * document on the left and its metadata rail on the right. The body loads when the dialog
+ * opens — a document is there to be read, not to be asked twice.
+ */
+function DocModal({ detail, loading, error, onClose, loadBody }) {
+  const [copied, setCopied] = useState(false)
+  const command = (detail && detail.command) || ""
+  const ref = (detail && detail.ref) || ""
+  const [body, setBody] = useState({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+
+  useEffect(() => {
+    setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
+  }, [ref])
+
+  const read = () => {
+    if (!loadBody || !ref) return
+    setBody((previous) => ({ ...previous, state: "loading", error: "" }))
+    Promise.resolve(loadBody(ref))
+      .then((payload) => setBody({
+        state: "ready",
+        text: (payload && payload.text) || "",
+        truncated: Boolean(payload && payload.truncated),
+        total: (payload && payload.total) || 0,
+        command: (payload && payload.command) || "",
+        error: ""
+      }))
+      .catch((failure) => setBody({
+        state: "error", text: "", truncated: false, total: 0, command: "", error: errorMessage(failure)
+      }))
+  }
+
+  // the body is the reason the dialog exists: fetch it as soon as the entry is known
+  useEffect(() => {
+    if (ref && body.state === "idle") read()
+  }, [ref, body.state])
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.addEventListener) return undefined
+    const onKey = (event) => { if (event.key === "Escape") onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  const copy = () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(command)
+      setCopied(true)
+    } catch (failure) {
+      setCopied(false)
+    }
+  }
+
+  const title = (detail && detail.fields && (detail.fields.title || detail.fields.statement)) || ref || "Document"
+
+  return h("div", {
+    "data-testid": "doc-modal-backdrop",
+    onClick: (event) => { if (event.target === event.currentTarget) onClose() },
+    style: {
+      position: "fixed", inset: 0, zIndex: 60, background: "rgba(0, 0, 0, 0.45)",
+      display: "grid", placeItems: "center", padding: 24
+    }
+  },
+    h("div", {
+      "data-testid": "doc-modal",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-label": "document",
+      style: {
+        width: "min(1180px, 92vw)", height: "min(780px, 88vh)", display: "flex", flexDirection: "column",
+        background: "var(--ui-bg-elevated)", border: "1px solid " + UI.stroke, borderRadius: 10,
+        boxShadow: "0 24px 60px rgba(0, 0, 0, 0.35)", overflow: "hidden"
+      }
+    },
+      h("div", {
+        style: {
+          display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
+          borderBottom: "1px solid " + UI.stroke
+        }
+      },
+        h("span", { style: { ...mono, fontSize: 11, color: UI.quaternary } }, ref || "\u2026"),
+        h("span", { style: { ...mono, fontSize: 10, color: UI.quaternary } }, (detail && detail.kind) || ""),
+        h("button", {
+          type: "button",
+          "data-testid": "doc-modal-close",
+          "aria-label": "close document",
+          onClick: onClose,
+          style: {
+            marginLeft: "auto", display: "grid", placeItems: "center", width: 26, height: 26,
+            borderRadius: 4, border: 0, background: "transparent", color: UI.tertiary, cursor: "pointer"
+          }
+        }, h(Codicon, { name: "close", size: "0.9rem" }))),
+
+      h("div", { style: { display: "flex", minHeight: 0, flex: 1 } },
+        h("div", {
+          "data-testid": "doc-modal-body",
+          style: { flex: 1, minWidth: 0, overflow: "auto", padding: "22px 30px 36px" }
+        },
+          loading && !detail ? h(Loader, null) : null,
+          error ? h(ErrorState, { title: "The document could not be loaded", message: error, description: error }) : null,
+          detail ? h("h2", { style: { fontSize: 22, fontWeight: 650, lineHeight: 1.25, margin: "0 0 14px" } }, title) : null,
+          body.state === "loading" || body.state === "idle" ? h(Loader, null) : null,
+          body.state === "error"
+            ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
+            : null,
+          body.state === "ready"
+            ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+              h("div", { "data-testid": "body-text" }, h(MessageTextContent, { text: body.text })),
+              body.truncated
+                ? h("p", { "data-testid": "body-truncated", style: mutedText },
+                  "Showing the first " + body.text.length + " of " + body.total
+                  + " characters. Read the rest with: " + body.command)
+                : null)
+            : null),
+
+        detail
+          ? h("aside", {
+            "data-testid": "doc-modal-meta",
+            "aria-label": "document metadata",
+            style: {
+              width: 300, flexShrink: 0, borderLeft: "1px solid " + UI.stroke,
+              overflow: "auto", padding: "16px 14px"
+            }
+          }, h(EntryMeta, { detail, command, copy, copied }))
+          : null)))
+}
+
 
 
 /** The page: loads the project list, then the view the nav state asks for. */
@@ -1193,6 +1290,10 @@ function ProductPage({ ctx }) {
   const detailOne = detail && detail.project === project && detail.ref === nav.selected
     ? detail.payload
     : null
+  // A document is read in a dialog (the kanban card-modal shape); while its detail is in
+  // flight we already know the answer from the view that opened it.
+  const docOpen = Boolean(nav.selected && ((detailOne && detailOne.kind === "doc")
+    || (detailLoading && nav.view === "docs")))
 
   const order = (states && states[kind]) || STATE_ORDER[kind] || []
   const entries = entryView && entryView.entries ? sortEntries(entryView.entries, order) : []
@@ -1291,7 +1392,7 @@ function ProductPage({ ctx }) {
 
       h("div", { className: "flex min-h-0 flex-1 gap-3" },
         h("div", { className: "flex-1 min-w-0 overflow-auto" }, content()),
-        nav.selected
+        nav.selected && !docOpen
           ? h(DetailPanel, {
             detail: detailOne,
             loading: detailLoading,
@@ -1300,6 +1401,16 @@ function ProductPage({ ctx }) {
             loadBody: (ref) => ctx.rest(bodyPath(project, ref))
           })
           : null)),
+
+    docOpen
+      ? h(DocModal, {
+        detail: detailOne,
+        loading: detailLoading,
+        error: detailError,
+        onClose: closeDetail,
+        loadBody: (ref) => ctx.rest(bodyPath(project, ref))
+      })
+      : null,
 
     h(NewProjectDialog, { open: dialogOpen, onClose: closeDialog, onCreate: createProject }))
 }
