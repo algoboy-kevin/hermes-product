@@ -710,7 +710,7 @@ function Card({ entry, kind, onSelect, onTogglePin }) {
         "absolute top-1 right-1.5 grid place-items-center rounded p-0.5 transition-opacity",
         entry.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100"
       ),
-      style: { color: entry.pinned ? "#eab308" : UI.quaternary, cursor: "pointer", lineHeight: 0 }
+      style: { color: entry.pinned ? UI.tertiary : UI.quaternary, cursor: "pointer", lineHeight: 0 }
     }, h(Codicon, { name: "pin", size: "0.75rem" })),
 
     h("div", { className: "flex items-center gap-2" },
@@ -725,8 +725,10 @@ function Card({ entry, kind, onSelect, onTogglePin }) {
         ? h("span", {
           // which document IS the PRD, now that the PRD has no tab of its own
           "data-testid": "card-prd",
-          className: "inline-flex items-center rounded-full px-1.5 py-px text-[0.625rem] font-semibold tracking-wide",
-          style: { background: "rgba(234, 179, 8, 0.16)", color: "#eab308", border: "1px solid rgba(234, 179, 8, 0.4)" }
+          // same pill as the state chip beside it — same radius, padding and size; only the
+          // colour and the label differ, so the row reads as one row of facts
+          className: "inline-flex items-center gap-1 rounded-full bg-(--ui-bg-quaternary) px-1.5 py-px text-[0.625rem] font-medium",
+          style: { color: "#eab308" }
         }, "PRD")
         : null),
 
