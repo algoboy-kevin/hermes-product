@@ -37,6 +37,7 @@ Reject unknown or retired IDs in links and `superseded_by`; invalid transitions;
 | unverified_done | R# | `done` with a criterion not `passed` or `waived` | Error |
 | orphan_spec | S# | `approved` with no linked requirement | Error (Warning if `legacy`) |
 | stale_spec | S# | Linked requirement statement changed after approval | Warning |
+| spec_behind | S# | `draft` or `approved` while a linked F# is `shipped` or a linked R# is `done` | Warning |
 | feature_without_requirement | F# | `planned` or later, no requirement, not `infra` | Warning |
 | at_risk | R#, F# | A dependency is blocked or cut | Warning |
 | dependency_cycle | F#, R#, S# | Cycle in dependency edges | Error |

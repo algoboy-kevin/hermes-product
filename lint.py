@@ -350,6 +350,7 @@ def check(facts: dict) -> list[Finding]:
                                           criteria_by_requirement.get(requirement["id"], []))
     for spec in specs:
         findings += _spec_findings(spec, history)
+        findings += _spec_behind_findings(spec, features_by_id, requirements_by_id)
     for feature in features:
         findings += _feature_findings(feature)
     findings += _at_risk_findings(requirements, features, deps,
@@ -494,6 +495,38 @@ def _spec_findings(spec: dict, history: list[dict]) -> list[Finding]:
                     f"R{changed_after[0]} statement changed after approval",
                 ))
     return findings
+
+
+#: the spec states that should already have caught up with shipped or done work
+_SPEC_OPEN_STATES = ("draft", "approved")
+
+
+def _spec_behind_findings(spec: dict, features_by_id: dict,
+                          requirements_by_id: dict) -> list[Finding]:
+    """spec_behind: a ``draft``/``approved`` S# whose own work already finished (PURE).
+
+    A linked feature ``shipped`` or a linked requirement ``done`` is work the spec
+    still presents as open — the spec is behind it. The first piece of evidence
+    wins, and features are checked before requirements, so a spec linked to both
+    names the feature. A retired row (``cut`` feature, ``dropped`` requirement) is
+    never evidence, because it is not one of the two words above.
+    """
+    status = spec["status"]
+    if status not in _SPEC_OPEN_STATES:
+        return []
+    ref = f"S{spec['id']}"
+    links = spec.get("links") or {}
+    for feature_id in links.get("features") or ():
+        feature = features_by_id.get(feature_id)
+        if feature is not None and feature["status"] == "shipped":
+            return [Finding("spec_behind", "warning", ref,
+                            f"{ref} {status} but F{feature_id} shipped")]
+    for requirement_id in links.get("requirements") or ():
+        requirement = requirements_by_id.get(requirement_id)
+        if requirement is not None and requirement["status"] == "done":
+            return [Finding("spec_behind", "warning", ref,
+                            f"{ref} {status} but R{requirement_id} done")]
+    return []
 
 
 def _approval_row_id(history: list[dict], spec_id: int) -> Optional[int]:
