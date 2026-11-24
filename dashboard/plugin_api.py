@@ -75,6 +75,27 @@ docs_text = importlib.import_module(f"{_PKG}.docs_text")
 
 router = APIRouter()
 
+
+def _apply_pending_migrations() -> None:
+    """Bring the store to the schema this build expects, once, at import.
+
+    Every reader below opens the db read-only, so nothing else would ever apply a pending
+    migration — restarting the desktop app would leave the page reading yesterday's columns.
+    A schema upgrade is the one write this module performs; a newer store (or a locked file)
+    is left alone and the page still reads what it can.
+    """
+    if not Path(store.db_path()).exists():
+        return                                          # a read never creates the store
+    try:
+        store.connect().close()
+    except Exception:                                   # pragma: no cover - best effort
+        import logging
+        logging.getLogger("product.plugin_api").debug(
+            "could not apply pending migrations", exc_info=True)
+
+
+_apply_pending_migrations()
+
 PLUGIN = "product"
 VERSION = "0.0.1"
 
