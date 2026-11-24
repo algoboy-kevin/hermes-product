@@ -939,6 +939,28 @@ check(one("body-truncated") !== undefined
   && text(one("body-truncated")).includes("hermes product show S1 --body --max-chars 100000"),
   "body: a truncated read says how many characters it hid and how to read the rest")
 
+// -- A34 the document reader ---------------------------------------------------
+// A DOC is read, not inspected: metadata rail on the left, the markdown on the right,
+// loaded on open. Everything else keeps the narrow panel and its Show body toggle.
+await open({ real: true })
+await clickView("docs")
+await clickNode(cardOf("DOC1"), "open real DOC1")
+noRenderErrors("real DOC1 detail")
+check(one("detail-reader") !== undefined, "doc: opening a document shows the two-pane reader")
+check(one("detail-meta") !== undefined && one("body-pane") !== undefined,
+  "doc: the reader has a metadata rail and a body pane")
+check(matches("/project/shop/entry/DOC1/body").length === 1,
+  "doc: the body is fetched when the document opens, exactly once")
+check(one("body-text") !== undefined && text(one("body-text")).length > 0,
+  "doc: the body is on screen without pressing anything")
+check(one("body-toggle") === undefined && one("body-hide") === undefined,
+  "doc: the reader carries no Show/Hide body controls")
+check(one("body-section") === undefined, "doc: the metadata rail does not repeat the body section")
+await clickView("specs")
+await clickNode(cardOf("S1"), "open real S1 after a doc")
+check(one("detail-reader") === undefined && one("body-toggle") !== undefined,
+  "doc: a spec still opens the narrow panel with its Show body toggle")
+
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)
 if (failures > 0) {

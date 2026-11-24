@@ -818,6 +818,16 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
   const hideBody = () =>
     setBody({ state: "idle", text: "", truncated: false, total: 0, command: "", error: "" })
 
+  // A document is read, not inspected. A DOC (or anything with a body) opens a two-pane
+  // reader: metadata rail on the left, the markdown itself on the right, loaded on open.
+  // Everything else keeps the narrow column and its Show body toggle.
+  const reader = Boolean(detail && detail.body_chars > 0 && detail.kind === "doc")
+
+  useEffect(() => {
+    if (!reader || !showBody) return
+    if (body.state === "idle") showBody()
+  }, [ref, reader, body.state])
+
   const copy = () => {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -839,41 +849,8 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
   const docs = (detail && detail.docs) || []
   const history = (detail && detail.history) || []
 
-  return h("aside", {
-    "data-testid": "detail-panel",
-    "aria-label": "entry detail",
-    style: {
-      width: 380,
-      minWidth: 320,
-      maxWidth: "42vw",
-      flexShrink: 0,
-      overflow: "auto",
-      borderLeft: "1px solid " + UI.stroke,
-      paddingLeft: 14,
-      display: "flex",
-      flexDirection: "column",
-      gap: 4
-    }
-  },
-    h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
-      h("span", { style: { ...mono, fontSize: 11, color: UI.quaternary } }, (detail && detail.ref) || "…"),
-      h("span", { style: { ...mono, fontSize: 10, color: UI.quaternary } }, (detail && detail.kind) || ""),
-      h("button", {
-        type: "button",
-        "data-testid": "detail-close",
-        "aria-label": "close detail",
-        onClick: onClose,
-        style: {
-          marginLeft: "auto", display: "grid", placeItems: "center", width: 24, height: 24,
-          borderRadius: 4, border: 0, background: "transparent", color: UI.tertiary, cursor: "pointer"
-        }
-      }, h(Codicon, { name: "close", size: "0.85rem" }))),
+  const metaColumn = h("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
 
-    error ? h(ErrorState, { title: "The entry could not be loaded", message: error, description: error }) : null,
-    loading && !detail ? h(Loader, null) : null,
-
-    detail
-      ? h("div", { style: { display: "flex", flexDirection: "column", gap: 2 } },
         h("h3", { style: { fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 10 } },
           (detail.fields && (detail.fields.title || detail.fields.statement)) || detail.ref),
 
@@ -886,7 +863,7 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
                   fieldValue(value))))))
           : null,
 
-        detail.body_chars > 0
+        detail.body_chars > 0 && !reader
           ? section("Body", h("div", { "data-testid": "body-section", style: { display: "flex", flexDirection: "column", gap: 6 } },
             body.state === "idle"
               ? h("button", {
@@ -981,9 +958,78 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
               }
             }, h(Codicon, { name: copied ? "check" : "copy", size: "0.8rem" }))),
           h("p", { style: { ...mutedText, marginTop: 6 } },
-            "Read-only here by design: change the entry from the CLI above.")))
-      : null)
+            "Read-only here by design: change the entry from the CLI above."))
+  )
+
+  // The reading pane: the document itself, already rendered by the chat markdown pipeline.
+  const bodyPane = detail && detail.body_chars > 0
+    ? h("div", { "data-testid": "body-pane", style: { flex: "1 1 440px", minWidth: 260, maxWidth: "100%" } },
+      body.state === "idle" || body.state === "loading" ? h(Loader, null) : null,
+      body.state === "error"
+        ? h(ErrorState, { title: "The body could not be loaded", message: body.error, description: body.error })
+        : null,
+      body.state === "ready"
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          h("div", { "data-testid": "body-text" }, h(MessageTextContent, { text: body.text })),
+          body.truncated
+            ? h("p", { "data-testid": "body-truncated", style: mutedText },
+              "Showing the first " + body.text.length + " of " + body.total
+              + " characters. Read the rest with: " + body.command)
+            : null)
+        : null)
+    : null
+
+  const detailBody = detail
+    ? (reader
+      ? h("div", {
+        "data-testid": "detail-reader",
+        style: { display: "flex", gap: 18, alignItems: "flex-start", flexWrap: "wrap" }
+      },
+        h("div", {
+          "data-testid": "detail-meta",
+          style: { flex: "0 0 236px", minWidth: 200, maxWidth: 280 }
+        }, metaColumn),
+        bodyPane)
+      : metaColumn)
+    : null
+
+  return h("aside", {
+    "data-testid": "detail-panel",
+    "aria-label": "entry detail",
+    style: {
+      width: reader ? "min(980px, 60vw)" : 380,
+      minWidth: reader ? 560 : 320,
+      maxWidth: reader ? "72vw" : "42vw",
+      flexShrink: 0,
+      overflow: "auto",
+      borderLeft: "1px solid " + UI.stroke,
+      paddingLeft: 14,
+      paddingRight: reader ? 14 : 0,
+      display: "flex",
+      flexDirection: "column",
+      gap: 4
+    }
+  },
+    h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+      h("span", { style: { ...mono, fontSize: 11, color: UI.quaternary } }, (detail && detail.ref) || "\u2026"),
+      h("span", { style: { ...mono, fontSize: 10, color: UI.quaternary } }, (detail && detail.kind) || ""),
+      h("button", {
+        type: "button",
+        "data-testid": "detail-close",
+        "aria-label": "close detail",
+        onClick: onClose,
+        style: {
+          marginLeft: "auto", display: "grid", placeItems: "center", width: 24, height: 24,
+          borderRadius: 4, border: 0, background: "transparent", color: UI.tertiary, cursor: "pointer"
+        }
+      }, h(Codicon, { name: "close", size: "0.85rem" }))),
+
+    error ? h(ErrorState, { title: "The entry could not be loaded", message: error, description: error }) : null,
+    loading && !detail ? h(Loader, null) : null,
+
+    detailBody)
 }
+
 
 /** The page: loads the project list, then the view the nav state asks for. */
 function ProductPage({ ctx }) {
