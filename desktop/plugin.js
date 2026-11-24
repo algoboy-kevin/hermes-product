@@ -1436,7 +1436,9 @@ function ProductPage({ ctx }) {
   return h("div", { className: "relative flex h-full min-h-0 flex-col" },
     h(ProjectSwitcher, { projects, slug: project, onPick: pickProject, onNew: openDialog }),
 
-    h("div", { className: "flex min-h-0 flex-1 flex-col gap-2 px-3 py-2" },
+    // pt-4 (not the symmetric py-2): the focus strip needs air under the app's header band,
+    // where the project switcher is contributed — it read as part of that row.
+    h("div", { className: "flex min-h-0 flex-1 flex-col gap-2 px-3 pb-2 pt-4" },
       h("div", { className: "flex flex-wrap items-center justify-between gap-2" },
         h(FocusBar, { value: nav.view, onChange: openView, counts: viewCounts }),
         h("div", { className: "flex items-center gap-2" },
