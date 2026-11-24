@@ -27,17 +27,15 @@ const entry = (id, status, extra = {}) => ({
 })
 
 // ------------------------------------------------------------------ vocabulary
-test("VIEWS is the six focus views in DOC2 order", () => {
-  assert.deepEqual(core.VIEWS, ["prd", "requirements", "acceptance", "features", "specs", "docs"])
+test("VIEWS is the five focus views, Docs first", () => {
+  assert.deepEqual(core.VIEWS, ["docs", "requirements", "acceptance", "features", "specs"])
 })
 
-test("every view has a label and a kind (prd has none)", () => {
+test("every view has a label and a kind", () => {
   assert.deepEqual(core.VIEWS.map((view) => core.VIEW_LABEL[view]),
-    ["PRD", "Requirements", "Acceptance", "Features", "Specs", "Docs"])
-  assert.equal(core.VIEW_KIND.prd, null)
-  assert.deepEqual(
-    core.VIEWS.slice(1).map((view) => core.VIEW_KIND[view]),
-    ["requirement", "criterion", "feature", "spec", "doc"])
+    ["Docs", "Requirements", "Acceptance", "Features", "Specs"])
+  assert.deepEqual(core.VIEWS.map((view) => core.VIEW_KIND[view]),
+    ["doc", "requirement", "criterion", "feature", "spec"])
 })
 
 test("STATE_ORDER mirrors GET /states (criterion failed-first)", () => {
@@ -144,9 +142,9 @@ test("filterByState with nothing in that state is empty", () => {
 // ----------------------------------------------------------------- navReducer
 const start = { project: "shop", view: "features", tab: "shipped", featureMode: "graph", selected: "F2" }
 
-test("selectProject lands on PRD with a clean slate", () => {
+test("selectProject lands on Docs with a clean slate", () => {
   const next = core.navReducer(start, { type: "selectProject", slug: "mobile" })
-  assert.deepEqual(next, { project: "mobile", view: "prd", tab: "all", featureMode: "cards", selected: null })
+  assert.deepEqual(next, { project: "mobile", view: "docs", tab: "all", featureMode: "cards", selected: null })
 })
 
 test("selectView sets the view and resets tab and selection", () => {
@@ -195,26 +193,25 @@ test("an unknown action changes nothing", () => {
 
 test("the reducer never mutates the state it was given", () => {
   const state = { ...start }
-  core.navReducer(state, { type: "selectView", view: "prd" })
+  core.navReducer(state, { type: "selectView", view: "docs" })
   core.navReducer(state, { type: "selectProject", slug: "x" })
   assert.deepEqual(state, start)
 })
 
-test("the initial state opens on PRD, All, cards, nothing selected", () => {
-  assert.deepEqual(core.initialState, { project: null, view: "prd", tab: "all", featureMode: "cards", selected: null })
+test("the initial state opens on Docs, All, cards, nothing selected", () => {
+  assert.deepEqual(core.initialState, { project: null, view: "docs", tab: "all", featureMode: "cards", selected: null })
 })
 
 // ------------------------------------------------------- showStatusTabs/Mode
-test("status tabs show on every view but PRD", () => {
-  assert.equal(core.showStatusTabs("prd"), false)
-  for (const view of ["requirements", "acceptance", "features", "specs", "docs"]) {
+test("status tabs show on every view", () => {
+  for (const view of ["docs", "requirements", "acceptance", "features", "specs"]) {
     assert.equal(core.showStatusTabs(view), true, view)
   }
 })
 
 test("the Cards|Graph toggle exists on Features only", () => {
   assert.equal(core.showModeToggle("features"), true)
-  for (const view of ["prd", "requirements", "acceptance", "specs", "docs"]) {
+  for (const view of ["docs", "requirements", "acceptance", "specs"]) {
     assert.equal(core.showModeToggle(view), false, view)
   }
 })

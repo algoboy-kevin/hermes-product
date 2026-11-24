@@ -264,9 +264,20 @@ CREATE TABLE doc_v3 (
     con.execute("ALTER TABLE doc_v3 RENAME TO doc")
 
 
+def _migrate_v4_doc_flags(con: sqlite3.Connection) -> None:
+    """v4: ``doc.pinned`` and ``doc.is_prd``, the two flags a document card shows.
+
+    Added in place (ADD COLUMN with a default), so rows, ids and links are untouched; every
+    existing document comes out unpinned and not-a-PRD.
+    """
+    con.execute("ALTER TABLE doc ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    con.execute("ALTER TABLE doc ADD COLUMN is_prd INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (2, "body column on requirement, feature and spec", _migrate_v2_entity_body),
     (3, "doc.kind without a CHECK (kinds are validated by the model)", _migrate_v3_open_doc_kinds),
+    (4, "doc.pinned and doc.is_prd flags", _migrate_v4_doc_flags),
 ]
 
 def latest_version() -> int:

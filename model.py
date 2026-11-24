@@ -209,6 +209,10 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "superseded_by": {"type": "ref", "target": "doc"},
         "notes": {"type": "text"},
         "body_ref": {"type": "text"},
+        # `pinned`: the reader keeps this document at hand. `is_prd`: this document IS the
+        # project's PRD — one flag instead of a view that owns a single kind.
+        "pinned": {"type": "bool"},
+        "is_prd": {"type": "bool"},
     },
 }
 
@@ -220,7 +224,7 @@ ADD_FIELDS: dict[str, tuple[str, ...]] = {
     "feature": ("title", "layer", "slug", "phase", "description", "infra", "paths", "notes",
                 "body"),
     "spec": ("title", "summary", "paths", "notes", "body"),
-    "doc": ("title", "kind", "summary", "notes", "body_ref"),
+    "doc": ("title", "kind", "summary", "notes", "body_ref", "pinned", "is_prd"),
 }
 
 #: what `set <REF> key=value` accepts
@@ -233,7 +237,8 @@ SET_FIELDS: dict[str, tuple[str, ...]] = {
                 "description", "infra", "paths", "blocked", "blocked_reason", "notes", "body"),
     "spec": ("title", "summary", "status", "status_reason", "superseded_by", "paths",
              "blocked", "blocked_reason", "notes", "body"),
-    "doc": ("title", "kind", "summary", "status", "superseded_by", "notes", "body_ref"),
+    "doc": ("title", "kind", "summary", "status", "superseded_by", "notes", "body_ref",
+            "pinned", "is_prd"),
 }
 
 REQUIRED_AT_ADD: dict[str, tuple[str, ...]] = {
@@ -249,7 +254,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "criterion": {},
     "feature": {"blocked": 0, "infra": 0},
     "spec": {"blocked": 0},
-    "doc": {},
+    "doc": {"pinned": 0, "is_prd": 0},
 }
 
 

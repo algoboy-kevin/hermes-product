@@ -114,10 +114,10 @@ FIELD_ORDER: dict[str, tuple[str, ...]] = {
     "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
              "blocked", "blocked_reason", "notes", "updated_at"),
     "doc": ("id", "title", "kind", "summary", "body_ref", "status", "superseded_by", "notes",
-            "updated_at"),
+            "pinned", "is_prd", "updated_at"),
 }
 
-_FLAG_FIELDS = {"blocked", "legacy", "infra"}
+_FLAG_FIELDS = {"blocked", "legacy", "infra", "pinned", "is_prd"}
 _SUMMARY_MAX = 160
 _FLAT_RE = re.compile(r"\s+")
 
@@ -369,6 +369,9 @@ def _entry_card(kind: str, row: dict) -> dict:
                                if row.get("requirement_id") else None)
     elif kind == "doc":
         item["kind"] = row.get("doc_kind")
+        # the two flags the card draws: a pin top-right, a PRD badge beside the state
+        item["pinned"] = bool(int(row.get("pinned") or 0))
+        item["is_prd"] = bool(int(row.get("is_prd") or 0))
     return item
 
 

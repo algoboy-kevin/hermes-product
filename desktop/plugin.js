@@ -55,27 +55,28 @@ const SLUG_RULE = "^[a-z0-9][a-z0-9-]{0,39}$"
 /* No React, no SDK, no I/O in this block: it is the half of the page that can be
  * pinned without a browser (tests/ui/core.test.mjs). */
 
-/** The six focus views, in DOC2 order, with their label and the entry kind each reads. */
-const VIEWS = ["prd", "requirements", "acceptance", "features", "specs", "docs"]
-//: the five card kinds, in VIEWS order minus the PRD (which is one document, not a list)
-const ENTRY_KINDS = ["requirement", "criterion", "feature", "spec", "doc"]
+/**
+ * The five focus views, Docs first. There is no PRD view: the PRD is a document (its row
+ * carries `is_prd`), so it lives in the Docs list with a badge instead of owning a tab.
+ */
+const VIEWS = ["docs", "requirements", "acceptance", "features", "specs"]
+//: the card kinds, in VIEWS order
+const ENTRY_KINDS = ["doc", "requirement", "criterion", "feature", "spec"]
 
 const VIEW_LABEL = {
-  prd: "PRD",
+  docs: "Docs",
   requirements: "Requirements",
   acceptance: "Acceptance",
   features: "Features",
-  specs: "Specs",
-  docs: "Docs"
+  specs: "Specs"
 }
 
 const VIEW_KIND = {
-  prd: null,
+  docs: "doc",
   requirements: "requirement",
   acceptance: "criterion",
   features: "feature",
-  specs: "spec",
-  docs: "doc"
+  specs: "spec"
 }
 
 /** Fallback workflow order, identical to GET /project/{slug}/states (DOC2 behaviour 5). */
@@ -115,7 +116,7 @@ const LINK_BADGE = {
 
 const REF_PREFIX = { requirement: "R", criterion: "A", feature: "F", spec: "S", doc: "DOC" }
 
-const initialState = { project: null, view: "prd", tab: "all", featureMode: "cards", selected: null }
+const initialState = { project: null, view: "docs", tab: "all", featureMode: "cards", selected: null }
 
 /** A card view's state tone; anything unknown falls back to the tertiary text colour. */
 function statusColor(status) {
@@ -198,7 +199,7 @@ function linkBadges(kind, links) {
 function navReducer(state, action) {
   switch (action && action.type) {
     case "selectProject":
-      return { project: action.slug, view: "prd", tab: "all", featureMode: "cards", selected: null }
+      return { project: action.slug, view: "docs", tab: "all", featureMode: "cards", selected: null }
     case "selectView":
       return { ...state, view: action.view, tab: "all", selected: null }
     case "selectTab":
@@ -214,9 +215,9 @@ function navReducer(state, action) {
   }
 }
 
-/** Status tabs on every view but the PRD (A28). */
+/** Status tabs on every view (A28). With no PRD view left, every view is a card list. */
 function showStatusTabs(view) {
-  return view !== "prd"
+  return Boolean(VIEW_KIND[view])
 }
 
 /** The Cards|Graph toggle exists on Features only (A32). */
@@ -678,6 +679,16 @@ function Card({ entry, kind, onSelect }) {
     ),
     style: { borderLeftColor: tone }
   },
+    entry.pinned
+      ? h("span", {
+        // the pin lives in the card's top-right corner, out of the text flow
+        "data-testid": "card-pin",
+        "aria-label": "pinned",
+        title: "Pinned",
+        style: { position: "absolute", top: 6, right: 7, color: UI.quaternary, lineHeight: 0 }
+      }, h(Codicon, { name: "pin", size: "0.75rem" }))
+      : null,
+
     h("div", { className: "flex items-center gap-2" },
       h("span", { className: "font-mono text-[10px] text-(--ui-text-quaternary)" }, entry.ref),
       h("span", {
@@ -685,7 +696,15 @@ function Card({ entry, kind, onSelect }) {
         style: { color: tone }
       },
         h("span", { style: { width: 6, height: 6, borderRadius: 999, background: tone, display: "inline-block" } }),
-        stateLabel(entry.status))),
+        stateLabel(entry.status)),
+      entry.is_prd
+        ? h("span", {
+          // which document IS the PRD, now that the PRD has no tab of its own
+          "data-testid": "card-prd",
+          className: "inline-flex items-center rounded-full px-1.5 py-px text-[0.625rem] font-semibold tracking-wide",
+          style: { background: "rgba(234, 179, 8, 0.16)", color: "#eab308", border: "1px solid rgba(234, 179, 8, 0.4)" }
+        }, "PRD")
+        : null),
 
     h("div", { className: "line-clamp-2 text-xs font-semibold leading-snug" }, entry.title || entry.ref),
 
@@ -1175,9 +1194,6 @@ function ProductPage({ ctx }) {
   const [projectsLoading, setProjectsLoading] = useState(true)
   const [bootError, setBootError] = useState("")
   const [states, setStates] = useState(null)
-  const [prd, setPrd] = useState(null)
-  const [prdLoading, setPrdLoading] = useState(false)
-  const [prdError, setPrdError] = useState("")
   const [decks, setDecks] = useState(null)
   const [entriesLoading, setEntriesLoading] = useState(false)
   const [entriesError, setEntriesError] = useState("")
@@ -1230,20 +1246,6 @@ function ProductPage({ ctx }) {
       .catch(() => { if (alive) setStates(null) })
     return () => { alive = false }
   }, [ctx, project])
-
-  // the PRD view: markdown, an empty state, or the server's hint (A28)
-  useEffect(() => {
-    if (!project || nav.view !== "prd") return undefined
-    let alive = true
-    setPrd(null)
-    setPrdError("")
-    setPrdLoading(true)
-    Promise.resolve(ctx.rest("/project/" + project + "/prd"))
-      .then((payload) => { if (alive) setPrd({ project, payload: payload || null }) })
-      .catch((failure) => { if (alive) setPrdError(errorMessage(failure)) })
-      .finally(() => { if (alive) setPrdLoading(false) })
-    return () => { alive = false }
-  }, [ctx, project, nav.view])
 
   // One entries call per kind, per project, with NO status filter: tabs filter client-side
   // (A31), and the same deck feeds the focus bar's tallies, so switching views costs nothing.
@@ -1329,7 +1331,6 @@ function ProductPage({ ctx }) {
   // A payload is only shown for the project (and, for entries, the kind) it was
   // loaded for: switching project or view must not paint the previous data even
   // for a frame while the next request is in flight.
-  const prdOne = prd && prd.project === project ? prd.payload : null
   const entryView = decks && decks.project === project && kind ? decks.byKind[kind] : null
   const graphOne = graph && graph.project === project ? graph.payload : null
   const detailOne = detail && detail.project === project && detail.ref === nav.selected
@@ -1340,13 +1341,12 @@ function ProductPage({ ctx }) {
   const docOpen = Boolean(nav.selected && ((detailOne && detailOne.kind === "doc")
     || (detailLoading && nav.view === "docs")))
 
-  // The focus bar's tallies: the PRD is one document, every other view counts its cards.
+  // The focus bar's tallies: every view counts its cards.
   const deckOf = (each) => {
     const payload = decks && decks.project === project ? decks.byKind[each] : null
     return payload && payload.counts ? payload.counts.all : 0
   }
   const viewCounts = {
-    prd: prdOne && prdOne.markdown ? 1 : 0,
     requirements: deckOf("requirement"),
     acceptance: deckOf("criterion"),
     features: deckOf("feature"),
@@ -1383,22 +1383,6 @@ function ProductPage({ ctx }) {
           onClick: openDialog
         }, h("span", { className: "flex items-center gap-1" },
           h(Codicon, { name: "add", size: "0.8rem" }), "New project")))
-    }
-    if (nav.view === "prd") {
-      if (prdLoading && !prdOne) return h(Loader, null)
-      if (prdError) {
-        return h(ErrorState, { title: "The PRD could not be loaded", message: prdError, description: prdError })
-      }
-      // No wrapper: the chat renderer is `w-full max-w-none`, so the PRD measures exactly
-      // like a chat message — prose and tables share one full-width column. A max-width
-      // wrapper here caps paragraphs while wide tables still spill out of it, which reads
-      // as "text leaned left next to a full-width table".
-      if (prdOne && prdOne.markdown) return h(MessageTextContent, { text: prdOne.markdown })
-      return h(EmptyState, {
-        title: "No PRD yet",
-        description: (prdOne && prdOne.hint)
-          || 'hermes product add DOC --kind prd --title "<title>" --summary "<summary>"'
-      })
     }
     if (nav.view === "features" && nav.featureMode === "graph") {
       if (graphLoading && !graphOne) return h(Loader, null)

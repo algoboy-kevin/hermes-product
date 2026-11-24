@@ -377,8 +377,8 @@ const shopDeck = () => ({
     [3, "implemented", "Totals"]
   ]),
   doc: entriesOf("doc", [
-    [1, "current", "Webhook flow"],
-    [2, "current", "Product brief"],
+    [1, "current", "Webhook flow", { pinned: true }],
+    [2, "current", "Product brief", { is_prd: true }],
     [3, "superseded", "Old design"]
   ])
 })
@@ -650,41 +650,58 @@ check(matches("/project/shop/states").length === 1, "A27: states load for the re
 check(!calls().some((call) => call.path.startsWith("/project/mobile")),
   "A27: nothing is loaded for the project that was not chosen")
 
-// -- A28 landing on the PRD ---------------------------------------------------
-check(one("markdown") !== undefined, "A28: the page opens on the PRD view")
-const prdText = text(one("markdown"))
-check(prdText.includes("# Brief"), "A28: the PRD markdown reaches the chat markdown renderer")
-check(prdText.includes("| a | b |"), "A28: tables survive to the renderer")
-// The PRD must render in the content pane itself. A max-width wrapper caps paragraphs while
-// wide tables still spill out of it, which reads as "text leaned left, table full width".
-check(one("prd-reader") === undefined, "A28: the PRD has no width-capping reading-column wrapper")
-check(tabs().length === 0, "A28: no status tabs on the PRD view")
-check(matches("/project/shop/prd").length === 1, "A28: the PRD is fetched once")
+// -- A28 landing on Docs (there is no PRD view any more) -----------------------
+check(one("markdown") === undefined, "A28: the page lands on a card list, not a markdown document")
+check(focus()[0].props["data-view"] === "docs", "A28: Docs is the first focus view")
+check(cardRefs().every((ref) => ref.startsWith("DOC")), "A28: the landing view lists documents")
+check(matches("/project/shop/prd").length === 0, "A28: the retired PRD route is not fetched")
+check(tabs().length > 0, "A28: the Docs view carries its status tabs (current|superseded)")
+
+// -- the two doc flags on a card ------------------------------------------------
+const byTestId = (id) => all((node) => node && node.props && node.props["data-testid"] === id)
+const pinNodes = byTestId("card-pin")
+check(pinNodes.length === 1, "flags: exactly one card is pinned (got " + pinNodes.length + ")")
+check((pinNodes[0].props.style || {}).position === "absolute"
+  && (pinNodes[0].props.style || {}).right !== undefined,
+  "flags: the pin sits in the card's top-right corner")
+const prdNodes = byTestId("card-prd")
+check(prdNodes.length === 1 && text(prdNodes[0]) === "PRD",
+  "flags: one card carries a PRD badge (got " + prdNodes.length + ")")
+check(String((prdNodes[0].props.style || {}).color || "").toLowerCase() === "#eab308",
+  "flags: the PRD badge is yellow")
+const docCard = (ref) => JSON.stringify(cards().find((node) => node.props["data-ref"] === ref) || {})
+check(docCard("DOC1").includes("card-pin") && !docCard("DOC1").includes("card-prd"),
+  "flags: DOC1 is pinned and is not the PRD")
+check(docCard("DOC2").includes("card-prd") && !docCard("DOC2").includes("card-pin"),
+  "flags: DOC2 is the PRD and is not pinned")
+check(!docCard("DOC3").includes("card-pin") && !docCard("DOC3").includes("card-prd"),
+  "flags: a plain document carries neither")
 
 // -- focus-bar tallies: the capabilities-tab shape -----------------------------
 const tallies = () => byId("focus-count").map((node) => node.props["data-view"] + "=" + node.props["data-count"])
 check(JSON.stringify(tallies()) === JSON.stringify(
-  ["prd=1", "requirements=6", "acceptance=4", "features=4", "specs=3", "docs=3"]),
+  ["docs=3", "requirements=6", "acceptance=4", "features=4", "specs=3"]),
   "focus: every view carries its card count (got " + JSON.stringify(tallies()) + ")")
 check(matches("/project/shop/entries?kind=requirement").length === 1
   && matches("/project/shop/entries?kind=doc").length === 1,
   "focus: the counts ride the same one-fetch-per-kind deck, not a second call")
 
 
-// -- A29 the six focus buttons -----------------------------------------------
+// -- A29 the five focus buttons ----------------------------------------------
 const focusButtons = focus()
-check(focusButtons.length === 6, "A29: six focus buttons (got " + focusButtons.length + ")")
+check(focusButtons.length === 5, "A29: five focus buttons (got " + focusButtons.length + ")")
 check(JSON.stringify(focusButtons.map(text)).includes("Requirements")
   && JSON.stringify(focusButtons.map(text)).includes("Acceptance")
   && JSON.stringify(focusButtons.map(text)).includes("Specs")
   && JSON.stringify(focusButtons.map(text)).includes("Docs")
-  && JSON.stringify(focusButtons.map(text)).includes("PRD")
   && JSON.stringify(focusButtons.map(text)).includes("Features"),
-  "A29: PRD, Requirements, Acceptance, Features, Specs, Docs are all offered")
-const prdButton = focusButtons.find((node) => node.props["data-view"] === "prd")
+  "A29: Docs, Requirements, Acceptance, Features, Specs are all offered")
+check(!JSON.stringify(focusButtons.map(text)).includes("PRD"),
+  "A29: the PRD is no longer a view of its own")
+const prdButton = focusButtons.find((node) => node.props["data-view"] === "docs")
 check(prdButton && prdButton.props["aria-pressed"] === true, "A29: the active view is aria-pressed")
 // the strip's vocabulary: bare labels + an underline, never the state-tab chip
-const prdFocus = focusButtons.find((node) => node.props["data-view"] === "prd")
+const prdFocus = focusButtons.find((node) => node.props["data-view"] === "docs")
 check(prdFocus.props.className.includes("bg-transparent")
   && !prdFocus.props.className.includes("bg-background"),
   "focus: the focus tabs carry no chip background (that belongs to the state tabs)")
@@ -811,7 +828,7 @@ await click("mode-cards")
 check(cards().length === 4 && one("graph") === undefined, "A32: the toggle goes back to cards")
 
 // -- A32 no toggle anywhere else ---------------------------------------------
-for (const view of ["prd", "requirements", "acceptance", "specs", "docs"]) {
+for (const view of ["docs", "requirements", "acceptance", "specs"]) {
   await clickView(view)
   check(byId("mode-toggle").length === 0, "A32: no Cards|Graph toggle on " + view)
 }
@@ -823,12 +840,9 @@ await clickNode(byId("project-item").find((node) => node.props["data-slug"] === 
 noRenderErrors("after project switch")
 check(server.state.remembered === "mobile", "A27: the chosen project is remembered through ctx.storage")
 check(calls().length > beforeSwitch, "A27: switching project reloads the data")
-check(matches("/project/mobile/prd").length === 1, "A27/A28: the switch lands on the new project's PRD")
-check(one("markdown") === undefined && one("empty-state") !== undefined,
-  "A28: a project with no PRD shows an empty state")
-check(text(one("empty-state")).includes("hermes product add DOC"),
-  "A28: the empty state names the command that adds a PRD")
-check(tabs().length === 0, "A28: still no status tabs after a project switch")
+check(focus()[0].props["data-view"] === "docs" && one("markdown") === undefined,
+  "A27/A28: the switch lands on the new project's Docs list")
+check(tabs().length > 0, "A28: the Docs status tabs are there after a project switch")
 await clickView("requirements")
 check(cardRefs().join(",") === "R1" && text(cards()[0]).includes("Mobile login"),
   "A27: every view shows the newly selected project's data")
@@ -852,7 +866,8 @@ check(one("new-project-dialog") === undefined, "A26: the dialog closes on succes
 check(text(one("project-switcher")).includes("newproj")
   || text(one("project-switcher")).includes("New Project"),
   "A26: the created project is selected")
-check(matches("/project/newproj/prd").length === 1, "A26: the new project's PRD view opens")
+check(matches("/project/newproj/entries?kind=doc").length === 1 && matches("/project/newproj/states").length === 1,
+  "A26: the new project opens on its Docs list")
 
 // -- A26 New project: a 400 keeps the dialog open ----------------------------
 server.state.duplicateSlug = "newproj"
@@ -893,7 +908,7 @@ await open({ failProjects: "connect ECONNREFUSED 127.0.0.1:8765" })
 noRenderErrors("backend down")
 check(one("error-state") !== undefined, "a rejected call renders ErrorState")
 check(text(one("error-state")).includes("ECONNREFUSED"), "the error state carries the message")
-check(focus().length === 6, "the page is not blank: the focus buttons still render")
+check(focus().length === 5, "the page is not blank: the focus buttons still render")
 check(one("project-switcher") !== undefined, "the page is not blank: the header band still renders")
 check(one("loader") === undefined, "the loader is gone once the call failed")
 
@@ -902,7 +917,7 @@ check(one("loader") === undefined, "the loader is gone once the call failed")
 await open({ remembered: "deleted" })
 check(text(one("project-switcher")).includes("Mobile"),
   "A27: a forgotten project falls back to the server's active project")
-check(matches("/project/mobile/prd").length === 1 && matches("/project/mobile/states").length === 1,
+check(matches("/project/mobile/entries?kind=doc").length === 1 && matches("/project/mobile/states").length === 1,
   "A27: the fallback loads that project's data")
 
 // =========================================================================== session D
@@ -1018,8 +1033,8 @@ const emptyMobile = byId("project-item").find((node) => node.props["data-slug"] 
 await clickNode(emptyMobile, "switch to mobile for the tallies")
 check(JSON.stringify(tallies()) === JSON.stringify(["requirements=1"]),
   "focus: a view with no cards shows no tally at all (got " + JSON.stringify(tallies()) + ")")
-check(one("focus-count").props["data-view"] !== "prd",
-  "focus: no PRD tally when the project has no PRD document")
+check(JSON.stringify(tallies()) === JSON.stringify(["requirements=1"]),
+  "focus: only the views with cards carry a tally (got " + JSON.stringify(tallies()) + ")")
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)
