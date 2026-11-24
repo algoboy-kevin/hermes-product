@@ -452,7 +452,8 @@ function fakeServer(options = {}) {
     prd: { ...PRD },
     graphs: { ...GRAPHS },
     real: Boolean(options.real),
-    truncate: Boolean(options.truncate)
+    truncate: Boolean(options.truncate),
+    pendingDetail: Boolean(options.pendingDetail)
   }
   const ctx = {
     rest: (path, opts) => {
@@ -498,6 +499,9 @@ function fakeServer(options = {}) {
       }
       found = /^\/project\/([^/]+)\/entry\/(.+)$/.exec(path)
       if (found) {
+        // A detail that never arrives: the panel renders with `detail === null` for as long
+        // as the request is in flight, which is a real frame in the app.
+        if (state.pendingDetail) return new Promise(() => {})
         const ref = decodeURIComponent(found[2])
         if (state.real && REAL.entries[ref]) return Promise.resolve(REAL.entries[ref])
         const kind = ref.startsWith("A") ? "criterion" : ref.startsWith("F") ? "feature"
@@ -960,6 +964,16 @@ await clickView("specs")
 await clickNode(cardOf("S1"), "open real S1 after a doc")
 check(one("detail-reader") === undefined && one("body-toggle") !== undefined,
   "doc: a spec still opens the narrow panel with its Show body toggle")
+
+// -- the panel's loading frame --------------------------------------------------
+// The detail request is in flight and `detail` is null: the panel must still render.
+await open({ pendingDetail: true })
+await clickView("docs")
+await clickNode(cardOf("DOC1"), "open DOC1 while the detail is in flight")
+noRenderErrors("detail loading frame")
+check(one("detail-panel") !== undefined, "loading: the panel renders while the detail is in flight")
+check(one("detail-reader") === undefined && one("detail-meta") === undefined,
+  "loading: no reader and no metadata column before the detail arrives")
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)

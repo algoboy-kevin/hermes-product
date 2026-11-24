@@ -849,7 +849,9 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
   const docs = (detail && detail.docs) || []
   const history = (detail && detail.history) || []
 
-  const metaColumn = h("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
+  // Built only for a loaded detail: the column reads detail.fields/detail.ref directly,
+  // and the panel renders while the fetch is still in flight.
+  const metaColumn = detail ? h("div", { style: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 } },
 
         h("h3", { style: { fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 10 } },
           (detail.fields && (detail.fields.title || detail.fields.statement)) || detail.ref),
@@ -958,8 +960,7 @@ function DetailPanel({ detail, loading, error, onClose, loadBody }) {
               }
             }, h(Codicon, { name: copied ? "check" : "copy", size: "0.8rem" }))),
           h("p", { style: { ...mutedText, marginTop: 6 } },
-            "Read-only here by design: change the entry from the CLI above."))
-  )
+            "Read-only here by design: change the entry from the CLI above."))) : null
 
   // The reading pane: the document itself, already rendered by the chat markdown pipeline.
   const bodyPane = detail && detail.body_chars > 0
