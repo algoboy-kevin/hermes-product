@@ -397,6 +397,8 @@ const chip = (active) =>
   )
 
 const TRACK = "inline-flex items-center gap-0.5 rounded-[5px] bg-(--ui-bg-tertiary) p-0.5"
+/** The focus strip: flat labels on the page, spaced, nothing to click into. */
+const FOCUS_BAR = { display: "flex", alignItems: "baseline", gap: 20, flexWrap: "wrap" }
 const FIELD_LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-wide text-(--ui-text-tertiary)"
 const FIELD_INPUT =
   "w-full rounded-md border border-(--ui-border) bg-transparent px-2 py-1.5 text-xs " +
@@ -423,29 +425,45 @@ const sectionLabel = {
 const mutedText = { fontSize: 11.5, color: UI.quaternary }
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }
 
-/** The six focus views (A29): the active one is aria-pressed and highlighted. */
+/**
+ * The six focus views (A29). Deliberately NOT the state-tab chip: the capabilities strip is
+ * bare labels on the page background, the active one bright with an underline. No boxes, no
+ * track — the state tabs below keep that vocabulary so the two rows read as different things.
+ */
 function FocusBar({ value, onChange, counts }) {
   const tally = counts || {}
-  return h("span", { className: TRACK, role: "group", "aria-label": "views", style: trackStyle },
+  return h("span", { role: "group", "aria-label": "views", style: FOCUS_BAR },
     VIEWS.map((view) => {
+      const active = value === view
       const count = tally[view] || 0
       return h("button", {
         key: view,
         type: "button",
         "data-testid": "focus-view",
         "data-view": view,
-        "aria-pressed": value === view,
+        "aria-pressed": active,
         onClick: () => onChange(view),
-        className: chip(value === view)
+        className: cn(
+          "flex shrink-0 cursor-pointer items-baseline gap-1.5 border-0 bg-transparent px-0 pb-2 text-[0.8125rem]",
+          "leading-none transition-colors",
+          active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+        )
       },
-        h("span", { className: "whitespace-nowrap" }, VIEW_LABEL[view]),
+        h("span", {
+          className: "whitespace-nowrap",
+          style: {
+            fontWeight: active ? 600 : 500,
+            paddingBottom: 5,
+            borderBottom: "2px solid " + (active ? UI.quaternary : "transparent")
+          }
+        }, VIEW_LABEL[view]),
         count > 0
           ? h("span", {
             // the capabilities-tab shape: a quiet tally beside the label, gone when empty
             "data-testid": "focus-count",
             "data-view": view,
             "data-count": String(count),
-            className: "tabular-nums text-[0.625rem] font-normal text-(--ui-text-quaternary)"
+            style: { fontSize: 10.5, color: UI.quaternary, fontVariantNumeric: "tabular-nums" }
           }, String(count))
           : null)
     }))

@@ -683,6 +683,17 @@ check(JSON.stringify(focusButtons.map(text)).includes("Requirements")
   "A29: PRD, Requirements, Acceptance, Features, Specs, Docs are all offered")
 const prdButton = focusButtons.find((node) => node.props["data-view"] === "prd")
 check(prdButton && prdButton.props["aria-pressed"] === true, "A29: the active view is aria-pressed")
+// the strip's vocabulary: bare labels + an underline, never the state-tab chip
+const prdFocus = focusButtons.find((node) => node.props["data-view"] === "prd")
+check(prdFocus.props.className.includes("bg-transparent")
+  && !prdFocus.props.className.includes("bg-background"),
+  "focus: the focus tabs carry no chip background (that belongs to the state tabs)")
+const prdLabel = [].concat(prdFocus.props.children || [])[0]
+check(prdLabel && String((prdLabel.props.style || {}).borderBottom || "").startsWith("2px solid"),
+  "focus: the active view is marked by an underline")
+const focusTrack = one("focus-view").props.className.includes("rounded-[5px]")
+check(!focusTrack, "focus: the strip is not a boxed track")
+
 check(focusButtons.filter((node) => node.props["aria-pressed"] === true).length === 1,
   "A29: exactly one focus button is highlighted")
 
