@@ -57,6 +57,8 @@ const SLUG_RULE = "^[a-z0-9][a-z0-9-]{0,39}$"
 
 /** The six focus views, in DOC2 order, with their label and the entry kind each reads. */
 const VIEWS = ["prd", "requirements", "acceptance", "features", "specs", "docs"]
+//: the five card kinds, in VIEWS order minus the PRD (which is one document, not a list)
+const ENTRY_KINDS = ["requirement", "criterion", "feature", "spec", "doc"]
 
 const VIEW_LABEL = {
   prd: "PRD",
@@ -422,10 +424,12 @@ const mutedText = { fontSize: 11.5, color: UI.quaternary }
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }
 
 /** The six focus views (A29): the active one is aria-pressed and highlighted. */
-function FocusBar({ value, onChange }) {
+function FocusBar({ value, onChange, counts }) {
+  const tally = counts || {}
   return h("span", { className: TRACK, role: "group", "aria-label": "views", style: trackStyle },
-    VIEWS.map((view) =>
-      h("button", {
+    VIEWS.map((view) => {
+      const count = tally[view] || 0
+      return h("button", {
         key: view,
         type: "button",
         "data-testid": "focus-view",
@@ -433,7 +437,18 @@ function FocusBar({ value, onChange }) {
         "aria-pressed": value === view,
         onClick: () => onChange(view),
         className: chip(value === view)
-      }, h("span", { className: "whitespace-nowrap" }, VIEW_LABEL[view]))))
+      },
+        h("span", { className: "whitespace-nowrap" }, VIEW_LABEL[view]),
+        count > 0
+          ? h("span", {
+            // the capabilities-tab shape: a quiet tally beside the label, gone when empty
+            "data-testid": "focus-count",
+            "data-view": view,
+            "data-count": String(count),
+            className: "tabular-nums text-[0.625rem] font-normal text-(--ui-text-quaternary)"
+          }, String(count))
+          : null)
+    }))
 }
 
 /** "All . n" plus one tab per workflow state, with the API's counts (A31). */
@@ -1145,7 +1160,7 @@ function ProductPage({ ctx }) {
   const [prd, setPrd] = useState(null)
   const [prdLoading, setPrdLoading] = useState(false)
   const [prdError, setPrdError] = useState("")
-  const [entryData, setEntryData] = useState(null)
+  const [decks, setDecks] = useState(null)
   const [entriesLoading, setEntriesLoading] = useState(false)
   const [entriesError, setEntriesError] = useState("")
   const [graph, setGraph] = useState(null)
@@ -1212,19 +1227,27 @@ function ProductPage({ ctx }) {
     return () => { alive = false }
   }, [ctx, project, nav.view])
 
-  // one entries call per view, with NO status filter: tabs filter client-side (A31)
+  // One entries call per kind, per project, with NO status filter: tabs filter client-side
+  // (A31), and the same deck feeds the focus bar's tallies, so switching views costs nothing.
   useEffect(() => {
-    if (!project || !kind) return undefined
+    if (!project) return undefined
     let alive = true
-    setEntryData(null)
+    setDecks(null)
     setEntriesError("")
     setEntriesLoading(true)
-    Promise.resolve(ctx.rest("/project/" + project + "/entries?kind=" + kind))
-      .then((payload) => { if (alive) setEntryData({ project, kind, payload: payload || null }) })
+    Promise.all(ENTRY_KINDS.map((each) =>
+      Promise.resolve(ctx.rest("/project/" + project + "/entries?kind=" + each))
+        .then((payload) => [each, payload || null])))
+      .then((pairs) => {
+        if (!alive) return
+        const byKind = {}
+        pairs.forEach((pair) => { byKind[pair[0]] = pair[1] })
+        setDecks({ project, byKind })
+      })
       .catch((failure) => { if (alive) setEntriesError(errorMessage(failure)) })
       .finally(() => { if (alive) setEntriesLoading(false) })
     return () => { alive = false }
-  }, [ctx, project, kind])
+  }, [ctx, project])
 
   // the graph, only when the Features view asks for it (A32)
   useEffect(() => {
@@ -1289,9 +1312,7 @@ function ProductPage({ ctx }) {
   // loaded for: switching project or view must not paint the previous data even
   // for a frame while the next request is in flight.
   const prdOne = prd && prd.project === project ? prd.payload : null
-  const entryView = entryData && entryData.project === project && entryData.kind === kind
-    ? entryData.payload
-    : null
+  const entryView = decks && decks.project === project && kind ? decks.byKind[kind] : null
   const graphOne = graph && graph.project === project ? graph.payload : null
   const detailOne = detail && detail.project === project && detail.ref === nav.selected
     ? detail.payload
@@ -1300,6 +1321,20 @@ function ProductPage({ ctx }) {
   // flight we already know the answer from the view that opened it.
   const docOpen = Boolean(nav.selected && ((detailOne && detailOne.kind === "doc")
     || (detailLoading && nav.view === "docs")))
+
+  // The focus bar's tallies: the PRD is one document, every other view counts its cards.
+  const deckOf = (each) => {
+    const payload = decks && decks.project === project ? decks.byKind[each] : null
+    return payload && payload.counts ? payload.counts.all : 0
+  }
+  const viewCounts = {
+    prd: prdOne && prdOne.markdown ? 1 : 0,
+    requirements: deckOf("requirement"),
+    acceptance: deckOf("criterion"),
+    features: deckOf("feature"),
+    specs: deckOf("spec"),
+    docs: deckOf("doc")
+  }
 
   const order = (states && states[kind]) || STATE_ORDER[kind] || []
   const entries = entryView && entryView.entries ? sortEntries(entryView.entries, order) : []
@@ -1385,7 +1420,7 @@ function ProductPage({ ctx }) {
 
     h("div", { className: "flex min-h-0 flex-1 flex-col gap-2 px-3 py-2" },
       h("div", { className: "flex flex-wrap items-center justify-between gap-2" },
-        h(FocusBar, { value: nav.view, onChange: openView }),
+        h(FocusBar, { value: nav.view, onChange: openView, counts: viewCounts }),
         h("div", { className: "flex items-center gap-2" },
           showModeToggle(nav.view)
             ? h(ModeToggle, { value: nav.featureMode, onChange: setFeatureMode })

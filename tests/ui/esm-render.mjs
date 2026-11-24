@@ -661,6 +661,16 @@ check(one("prd-reader") === undefined, "A28: the PRD has no width-capping readin
 check(tabs().length === 0, "A28: no status tabs on the PRD view")
 check(matches("/project/shop/prd").length === 1, "A28: the PRD is fetched once")
 
+// -- focus-bar tallies: the capabilities-tab shape -----------------------------
+const tallies = () => byId("focus-count").map((node) => node.props["data-view"] + "=" + node.props["data-count"])
+check(JSON.stringify(tallies()) === JSON.stringify(
+  ["prd=1", "requirements=6", "acceptance=4", "features=4", "specs=3", "docs=3"]),
+  "focus: every view carries its card count (got " + JSON.stringify(tallies()) + ")")
+check(matches("/project/shop/entries?kind=requirement").length === 1
+  && matches("/project/shop/entries?kind=doc").length === 1,
+  "focus: the counts ride the same one-fetch-per-kind deck, not a second call")
+
+
 // -- A29 the six focus buttons -----------------------------------------------
 const focusButtons = focus()
 check(focusButtons.length === 6, "A29: six focus buttons (got " + focusButtons.length + ")")
@@ -990,6 +1000,15 @@ await clickView("specs")
 await clickNode(cardOf("S1"), "open S1 while the detail is in flight")
 noRenderErrors("panel loading frame")
 check(one("detail-panel") !== undefined, "loading: the side panel renders while the detail is in flight")
+
+// -- tallies in a project with almost nothing -----------------------------------
+await open({})
+const emptyMobile = byId("project-item").find((node) => node.props["data-slug"] === "mobile")
+await clickNode(emptyMobile, "switch to mobile for the tallies")
+check(JSON.stringify(tallies()) === JSON.stringify(["requirements=1"]),
+  "focus: a view with no cards shows no tally at all (got " + JSON.stringify(tallies()) + ")")
+check(one("focus-count").props["data-view"] !== "prd",
+  "focus: no PRD tally when the project has no PRD document")
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)
