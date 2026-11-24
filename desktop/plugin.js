@@ -421,14 +421,6 @@ const sectionLabel = {
 const mutedText = { fontSize: 11.5, color: UI.quaternary }
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }
 
-/**
- * The PRD reading column. Long-form prose needs gutters: a centred measure bounded by
- * maxWidth, with real padding at the top and sides so the first heading is not welded to
- * the toolbar and the text does not run into the detail panel. Padding is kept (rather
- * than only centring) so narrow windows still get breathing room.
- */
-const PRD_READER = { boxSizing: "border-box", maxWidth: 1180, margin: "0 auto", padding: "44px 48px 72px" }
-
 /** The six focus views (A29): the active one is aria-pressed and highlighted. */
 function FocusBar({ value, onChange }) {
   return h("span", { className: TRACK, role: "group", "aria-label": "views", style: trackStyle },
@@ -1190,12 +1182,11 @@ function ProductPage({ ctx }) {
       if (prdError) {
         return h(ErrorState, { title: "The PRD could not be loaded", message: prdError, description: prdError })
       }
-      if (prdOne && prdOne.markdown) {
-        // The PRD is the one view that is long-form prose: give it a centred reading column
-        // with real gutters instead of letting the markdown run flush to the panel edge.
-        return h("div", { "data-testid": "prd-reader", style: PRD_READER },
-          h(MessageTextContent, { text: prdOne.markdown }))
-      }
+      // No wrapper: the chat renderer is `w-full max-w-none`, so the PRD measures exactly
+      // like a chat message — prose and tables share one full-width column. A max-width
+      // wrapper here caps paragraphs while wide tables still spill out of it, which reads
+      // as "text leaned left next to a full-width table".
+      if (prdOne && prdOne.markdown) return h(MessageTextContent, { text: prdOne.markdown })
       return h(EmptyState, {
         title: "No PRD yet",
         description: (prdOne && prdOne.hint)

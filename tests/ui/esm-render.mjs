@@ -651,6 +651,9 @@ check(one("markdown") !== undefined, "A28: the page opens on the PRD view")
 const prdText = text(one("markdown"))
 check(prdText.includes("# Brief"), "A28: the PRD markdown reaches the chat markdown renderer")
 check(prdText.includes("| a | b |"), "A28: tables survive to the renderer")
+// The PRD must render in the content pane itself. A max-width wrapper caps paragraphs while
+// wide tables still spill out of it, which reads as "text leaned left, table full width".
+check(one("prd-reader") === undefined, "A28: the PRD has no width-capping reading-column wrapper")
 check(tabs().length === 0, "A28: no status tabs on the PRD view")
 check(matches("/project/shop/prd").length === 1, "A28: the PRD is fetched once")
 
