@@ -430,7 +430,7 @@ def project_entries(
     def _rank(row: dict) -> tuple:
         # docs: pinned first, then the PRD, then the workflow order (the same rule the page
         # applies, so the CLI and the page agree on what "first" means)
-        flags = (0 if int(row.get("pinned") or 0) else 2) + (0 if int(row.get("is_prd") or 0) else 1)
+        flags = 0 if int(row.get("is_prd") or 0) else (1 if int(row.get("pinned") or 0) else 2)
         return (flags, order.get(row.get("status"), len(order)), row["id"])
 
     selected.sort(key=_rank)
@@ -542,6 +542,20 @@ def project_entry_body(slug: str, ref: str, section: Optional[str] = None,
 
 
 # ----------------------------------------------------------------------- /graph
+@router.post("/project/{slug}/entry/{ref}/pin")
+def pin_entry(slug: str, ref: str, pinned: bool = Query(default=True)) -> dict:
+    """Pin or unpin one entry.
+
+    The page's only write: ``pinned`` is a flag, not content, and it goes through
+    ``store.update_entity`` like every other change, so validation and ``updated_at`` apply.
+    """
+    try:
+        store.update_entity(slug, ref, {"pinned": bool(pinned)})
+    except Exception as exc:  # noqa: BLE001 - a bad ref or flag is a 400, not a traceback
+        return _error(400, str(exc))
+    return {"ref": ref, "pinned": bool(pinned)}
+
+
 @router.get("/project/{slug}/graph")
 @_guarded
 def project_graph(slug: str):

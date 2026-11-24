@@ -131,3 +131,55 @@ def test_the_card_carries_both_flags(home: Path) -> None:
     assert fields["pinned"] is True and fields["is_prd"] is True
     plain = client.get("/project/shop/entry/DOC1").json()["fields"]
     assert "pinned" not in plain and "is_prd" not in plain
+
+
+# --------------------------------------------------------------- pin endpoint + order
+def test_pin_endpoint_toggles_and_reorders(home: Path) -> None:
+    """The page's one write: POST .../pin flips the flag, and the list puts the PRD first,
+    then pinned entries, then the rest."""
+    # The flags are explicit by contract: only create_project(with_prd) and the v4 migration
+    # set them for you, so the PRD here is created flagged and pinned.
+    store.create_project("shop", "Shop")
+    store.create_entity("shop", "doc",
+                        {"title": "Product brief", "kind": "prd", "summary": "The PRD.",
+                         "is_prd": True, "pinned": True})
+    store.create_entity("shop", "doc",
+                        {"title": "Webhook flow", "kind": "design", "summary": "Webhooks."})
+    store.create_entity("shop", "doc",
+                        {"title": "Scratch notes", "kind": "design", "summary": "Notes."})
+    client = _client()
+
+    refs = [row["ref"] for row in client.get("/project/shop/entries", params={"kind": "doc"}).json()["entries"]]
+    assert refs == ["DOC1", "DOC2", "DOC3"]   # PRD first, then id order
+
+    pinned = client.post("/project/shop/entry/DOC3/pin", params={"pinned": "true"})
+    assert pinned.status_code == 200 and pinned.json() == {"ref": "DOC3", "pinned": True}
+
+    rows = client.get("/project/shop/entries", params={"kind": "doc"}).json()["entries"]
+    assert [row["ref"] for row in rows] == ["DOC1", "DOC3", "DOC2"]
+    assert [row["pinned"] for row in rows] == [True, True, False]
+
+    unpinned = client.post("/project/shop/entry/DOC3/pin", params={"pinned": "false"})
+    assert unpinned.status_code == 200
+    rows = client.get("/project/shop/entries", params={"kind": "doc"}).json()["entries"]
+    assert [row["ref"] for row in rows] == ["DOC1", "DOC2", "DOC3"]
+
+
+def test_prd_outranks_a_pinned_non_prd(home: Path) -> None:
+    """Priority is PRD, then pinned, then the rest — an unpinned PRD still leads."""
+    store.create_project("shop", "Shop")
+    store.create_entity("shop", "doc",
+                        {"title": "Brief", "kind": "prd", "summary": "x", "is_prd": True, "pinned": True})
+    store.create_entity("shop", "doc", {"title": "Note A", "kind": "design", "summary": "x"})
+    store.update_entity("shop", "DOC2", {"pinned": 1})          # pinned, not the PRD
+    store.update_entity("shop", "DOC1", {"pinned": 0})          # PRD, explicitly unpinned
+
+    rows = _client().get("/project/shop/entries", params={"kind": "doc"}).json()["entries"]
+    assert [row["ref"] for row in rows] == ["DOC1", "DOC2"]
+
+
+def test_pin_unknown_ref_is_400(home: Path) -> None:
+    _seed()
+    response = _client().post("/project/shop/entry/DOC9/pin", params={"pinned": "true"})
+    assert response.status_code == 400
+    assert "error" in response.json()

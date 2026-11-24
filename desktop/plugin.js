@@ -151,10 +151,11 @@ function refNumber(ref) {
 function sortEntries(entries, order) {
   const rank = new Map((order || []).map((state, index) => [state, index]))
   const unknown = rank.size
-  // Pinned first, then the PRD, then the workflow order: the document a reader wants at hand
+  // PRD first, then pinned, then the workflow order: the document a reader wants at hand
   // lands top-left instead of wherever its id happens to fall. Other kinds carry neither flag,
-  // so every entry ranks 3 and their order is untouched.
-  const flagRank = (entry) => (entry && entry.pinned ? 0 : 2) + (entry && entry.is_prd ? 0 : 1)
+  // so every entry ranks 2 and their order is untouched.
+  // PRD first (pinned or not), then pinned, then everything else.
+  const flagRank = (entry) => (!entry ? 2 : entry.is_prd ? 0 : entry.pinned ? 1 : 2)
   return (entries || []).slice().sort((a, b) => {
     const flags = flagRank(a) - flagRank(b)
     if (flags !== 0) return flags
@@ -669,9 +670,11 @@ function NewProjectDialog({ open, onClose, onCreate }) {
 }
 
 /** A Hermes kanban-shaped card: ref + status chip, title, summary, link badges (A30). */
-function Card({ entry, kind, onSelect }) {
+function Card({ entry, kind, onSelect, onTogglePin }) {
   const tone = statusColor(entry.status)
   const badges = linkBadges(kind, entry.links)
+  const [hover, setHover] = useState(false)
+  const lift = entry.pinned && hover
   return h("button", {
     type: "button",
     "data-testid": "card",
@@ -683,17 +686,32 @@ function Card({ entry, kind, onSelect }) {
       "border-(--ui-stroke-tertiary) border-l-2 bg-(--ui-bg-elevated) p-2.5 text-left",
       "transition-colors hover:bg-primary/[0.06]"
     ),
-    style: { borderLeftColor: tone }
+    // A pinned card lifts a little on hover; the transition makes the pin feel held,
+    // not stamped. Inline because the shipped stylesheet has no arbitrary utilities.
+    style: {
+      borderLeftColor: tone,
+      transform: lift ? "translateY(-1px)" : "none",
+      boxShadow: lift ? "0 3px 12px rgba(0,0,0,0.22)" : "none",
+      transition: "transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease"
+    },
+    onMouseEnter: () => setHover(true),
+    onMouseLeave: () => setHover(false)
   },
-    entry.pinned
-      ? h("span", {
-        // the pin lives in the card's top-right corner, out of the text flow
-        "data-testid": "card-pin",
-        "aria-label": "pinned",
-        title: "Pinned",
-        style: { position: "absolute", top: 6, right: 7, color: UI.quaternary, lineHeight: 0 }
-      }, h(Codicon, { name: "pin", size: "0.75rem" }))
-      : null,
+    // Pin control: hidden until the card is hovered, always visible once pinned, and a
+    // click toggles it without opening the card.
+    h("span", {
+      role: "button",
+      tabIndex: 0,
+      "data-testid": entry.pinned ? "card-pin" : "card-pin-off",
+      "aria-label": entry.pinned ? "Unpin" : "Pin to top",
+      title: entry.pinned ? "Unpin" : "Pin to top",
+      onClick: (event) => { event.stopPropagation(); if (onTogglePin) onTogglePin(entry, kind) },
+      className: cn(
+        "absolute top-1 right-1.5 grid place-items-center rounded p-0.5 transition-opacity",
+        entry.pinned ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+      ),
+      style: { color: entry.pinned ? "#eab308" : UI.quaternary, cursor: "pointer", lineHeight: 0 }
+    }, h(Codicon, { name: "pin", size: "0.75rem" })),
 
     h("div", { className: "flex items-center gap-2" },
       h("span", { className: "font-mono text-[10px] text-(--ui-text-quaternary)" }, entry.ref),
@@ -1420,7 +1438,33 @@ function ProductPage({ ctx }) {
         gap: 8,
         alignContent: "start"
       }
-    }, visible.map((entry) => h(Card, { key: entry.ref, entry, kind, onSelect: selectEntry })))
+    }, visible.map((entry) => h(Card, { key: entry.ref, entry, kind, onSelect: selectEntry, onTogglePin: togglePin })))
+  }
+
+  // The page's only write. Optimistic: flip the cached flag so the sort and the icon move
+  // together, then send it; a failure puts the error on the page and the next load wins.
+  const togglePin = (entry, kindOf) => {
+    if (!project) return
+    const next = !entry.pinned
+    setDecks((prev) => {
+      if (!prev) return prev
+      const deck = prev.byKind[kindOf]
+      if (!deck || !deck.entries) return prev
+      return {
+        project: prev.project,
+        byKind: {
+          ...prev.byKind,
+          [kindOf]: {
+            ...deck,
+            entries: deck.entries.map((each) => (each.ref === entry.ref ? { ...each, pinned: next } : each))
+          }
+        }
+      }
+    })
+    Promise.resolve(ctx.rest(
+      "/project/" + project + "/entry/" + encodeURIComponent(entry.ref) + "/pin?pinned=" + (next ? 1 : 0),
+      { method: "POST" }
+    )).catch((failure) => { setEntriesError(errorMessage(failure)) })
   }
 
   return h("div", { className: "relative flex h-full min-h-0 flex-col" },
