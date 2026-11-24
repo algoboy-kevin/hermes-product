@@ -58,8 +58,9 @@ def test_the_flags_are_plain_booleans_on_a_doc() -> None:
         model.validate_field("doc", "pinned", "DOC2")     # a ref is not a flag
 
 
-def test_v4_leaves_existing_documents_unpinned(home: Path) -> None:
-    """A db written at v3 gains both columns with a 0 default, rows intact."""
+def test_v3_database_migrates_and_flags_its_prd(home: Path) -> None:
+    """A db written at v3 gains both columns, and the document whose kind is prd becomes THE
+    PRD (flagged and pinned) — that is what fixes projects created before the flags existed."""
     path = store.db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(path))
@@ -68,14 +69,32 @@ def test_v4_leaves_existing_documents_unpinned(home: Path) -> None:
                 " VALUES ('shop','Shop','now','now')")
     con.execute("INSERT INTO doc(project, id, title, kind, summary, status, updated_at)"
                 " VALUES ('shop', 1, 'Old brief', 'prd', 'x', 'current', 'now')")
+    con.execute("INSERT INTO doc(project, id, title, kind, summary, status, updated_at)"
+                " VALUES ('shop', 2, 'Old note', 'design', 'x', 'current', 'now')")
     con.execute("PRAGMA user_version = 3")
     con.commit()
     con.close()
 
-    assert store.latest_version() == 4
+    assert store.latest_version() >= 5
     rows = store.list_entities("shop", "doc")
-    assert rows[0]["pinned"] == 0 and rows[0]["is_prd"] == 0
-    assert rows[0]["title"] == "Old brief"
+    prd = [row for row in rows if row["title"] == "Old brief"][0]
+    note = [row for row in rows if row["title"] == "Old note"][0]
+    assert (prd["is_prd"], prd["pinned"]) == (1, 1)
+    assert (note["is_prd"], note["pinned"]) == (0, 0)
+
+
+def test_a_new_project_is_seeded_with_its_prd(home: Path) -> None:
+    created = store.create_project("shop", "Shop", with_prd=True)
+    assert created["prd"] == "DOC1"
+    rows = store.list_entities("shop", "doc")
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row["doc_kind"], row["is_prd"], row["pinned"], row["status"]) == ("prd", 1, 1, "current")
+
+
+def test_a_plain_create_project_still_writes_no_document(home: Path) -> None:
+    store.create_project("bare", "Bare")
+    assert store.list_entities("bare", "doc") == []
 
 
 # --------------------------------------------------------------------- store roundtrip

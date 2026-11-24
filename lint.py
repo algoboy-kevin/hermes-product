@@ -609,10 +609,16 @@ def _linked_to_a_live_feature(features: list[dict], cut_id: int, requirement_id:
 
 
 def _doc_findings(doc_row: dict, drifted: set) -> list[Finding]:
-    """orphan_doc and doc_drift for one DOC#."""
+    """orphan_doc and doc_drift for one DOC#.
+
+    The PRD is exempt from orphan_doc: it is the document the project is built around, not a
+    supporting note that has to justify itself by linking something. Seeding it at project
+    creation would otherwise put a warning on a project that has done nothing wrong yet.
+    """
     ref = f"DOC{doc_row['id']}"
     findings: list[Finding] = []
-    if doc_row["status"] == "current" and not (doc_row.get("doc_links") or []):
+    is_prd = bool(int(doc_row.get("is_prd") or 0)) or doc_row.get("kind") == "prd"
+    if doc_row["status"] == "current" and not is_prd and not (doc_row.get("doc_links") or []):
         findings.append(Finding("orphan_doc", "warning", ref, "current with no link"))
     if doc_row["id"] in drifted:
         findings.append(Finding("doc_drift", "warning", ref,

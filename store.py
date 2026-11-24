@@ -274,10 +274,21 @@ def _migrate_v4_doc_flags(con: sqlite3.Connection) -> None:
     con.execute("ALTER TABLE doc ADD COLUMN is_prd INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_v5_flag_the_prds(con: sqlite3.Connection) -> None:
+    """v5: a document whose ``kind`` is ``prd`` IS the PRD — flag it and pin it.
+
+    Before the flags existed a project's PRD was identified by its kind alone, so every
+    such document comes out ``is_prd = 1``; it is also pinned, because the PRD is the
+    document a reader wants at the top of the list. Everything else keeps both flags off.
+    """
+    con.execute("UPDATE doc SET is_prd = 1, pinned = 1 WHERE kind = 'prd'")
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (2, "body column on requirement, feature and spec", _migrate_v2_entity_body),
     (3, "doc.kind without a CHECK (kinds are validated by the model)", _migrate_v3_open_doc_kinds),
     (4, "doc.pinned and doc.is_prd flags", _migrate_v4_doc_flags),
+    (5, "flag and pin the existing PRD documents", _migrate_v5_flag_the_prds),
 ]
 
 def latest_version() -> int:
@@ -436,9 +447,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+#: the document every new project starts with (seeded by ``create_project``)
+PRD_TITLE = "PRD"
+PRD_SUMMARY = "The product requirements document for this project."
+
+
 def create_project(slug: str, name: str, root: Union[str, Path, None] = None,
-                   con: Optional[sqlite3.Connection] = None) -> dict:
-    """Create a project; a duplicate slug or an invalid one raises StoreError (nothing created)."""
+                   con: Optional[sqlite3.Connection] = None, *,
+                   with_prd: bool = False) -> dict:
+    """Create a project; a duplicate slug or an invalid one raises StoreError (nothing created).
+
+    ``with_prd`` seeds the project's PRD as DOC1 (kind 'prd', ``is_prd`` and ``pinned`` on) in
+    the same transaction. Off by default because the store primitive is also what fixtures and
+    migrations use — initialisation asks for it explicitly (``project add``, POST /projects).
+    """
     clean = str(slug or "")
     if not _SLUG_RE.match(clean):
         raise StoreError(f"invalid project slug {clean!r}: must match {SLUG_RULE}")
@@ -453,8 +475,19 @@ def create_project(slug: str, name: str, root: Union[str, Path, None] = None,
             "INSERT INTO project(slug, name, root, created_at, updated_at) VALUES (?,?,?,?,?)",
             (clean, str(name), root_str, now, now),
         )
+        prd = None
+        if with_prd:
+            # A project without its PRD has nowhere to write the product down: seed DOC1 in the
+            # same transaction as the row, flagged as the PRD and pinned to the top of the list.
+            prd = create_entity(clean, "doc",
+                                {"title": PRD_TITLE, "kind": "prd", "summary": PRD_SUMMARY,
+                                 "is_prd": True, "pinned": True},
+                                con=con)
         con.commit()
-        return {"slug": clean, "name": str(name), "root": root_str}
+        result = {"slug": clean, "name": str(name), "root": root_str}
+        if prd is not None:
+            result["prd"] = prd["ref"]
+        return result
     finally:
         if own:
             con.close()

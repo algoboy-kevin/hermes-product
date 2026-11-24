@@ -62,6 +62,18 @@ test("sortEntries breaks ties by id ascending", () => {
   assert.deepEqual(core.sortEntries(rows, REQ).map((row) => row.id), [1, 3, 6])
 })
 
+test("sortEntries lifts a pinned document, then the PRD, above the workflow order", () => {
+  const order = ["current", "superseded"]
+  const rows = [
+    { id: 3, status: "current", title: "plain" },
+    { id: 2, status: "current", title: "prd", is_prd: true },
+    { id: 1, status: "superseded", title: "pinned old", pinned: true },
+    { id: 4, status: "current", title: "pinned + prd", pinned: true, is_prd: true }
+  ]
+  assert.deepEqual(core.sortEntries(rows, order).map((row) => row.title),
+    ["pinned + prd", "pinned old", "prd", "plain"])
+})
+
 test("sortEntries orders criteria failed-first", () => {
   const rows = [entry(1, "not_run", { prefix: "A" }), entry(2, "failed", { prefix: "A" }),
     entry(3, "passed", { prefix: "A" }), entry(4, "waived", { prefix: "A" })]

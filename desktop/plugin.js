@@ -151,7 +151,13 @@ function refNumber(ref) {
 function sortEntries(entries, order) {
   const rank = new Map((order || []).map((state, index) => [state, index]))
   const unknown = rank.size
+  // Pinned first, then the PRD, then the workflow order: the document a reader wants at hand
+  // lands top-left instead of wherever its id happens to fall. Other kinds carry neither flag,
+  // so every entry ranks 3 and their order is untouched.
+  const flagRank = (entry) => (entry && entry.pinned ? 0 : 2) + (entry && entry.is_prd ? 0 : 1)
   return (entries || []).slice().sort((a, b) => {
+    const flags = flagRank(a) - flagRank(b)
+    if (flags !== 0) return flags
     const left = rank.has(a.status) ? rank.get(a.status) : unknown
     const right = rank.has(b.status) ? rank.get(b.status) : unknown
     if (left !== right) return left - right

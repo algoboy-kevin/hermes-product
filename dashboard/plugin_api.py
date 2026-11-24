@@ -262,7 +262,8 @@ def projects_create(spec: NewProject):
     if not name:
         return _error(400, "name is required")
     try:
-        created = store.create_project(slug, name, root=spec.root or None)
+        # the page's New project initialises: the project arrives with its PRD
+        created = store.create_project(slug, name, root=spec.root or None, with_prd=True)
     except store.StoreError as exc:                    # bad or duplicate slug
         return _error(400, str(exc))
     return {"slug": created["slug"], "name": created["name"], "root": created["root"]}
@@ -404,7 +405,14 @@ def project_entries(
 
     order = {state: index for index, state in enumerate(WORKFLOW[kind])}
     selected = [row for row in rows if status is None or row.get("status") == status]
-    selected.sort(key=lambda row: (order.get(row.get("status"), len(order)), row["id"]))
+
+    def _rank(row: dict) -> tuple:
+        # docs: pinned first, then the PRD, then the workflow order (the same rule the page
+        # applies, so the CLI and the page agree on what "first" means)
+        flags = (0 if int(row.get("pinned") or 0) else 2) + (0 if int(row.get("is_prd") or 0) else 1)
+        return (flags, order.get(row.get("status"), len(order)), row["id"])
+
+    selected.sort(key=_rank)
     return {"kind": kind, "counts": counts,
             "entries": [_entry_card(kind, row) for row in selected]}
 

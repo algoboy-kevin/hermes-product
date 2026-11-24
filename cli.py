@@ -533,7 +533,7 @@ def _project(args: argparse.Namespace) -> str:
 
 def _project_add(args: argparse.Namespace) -> int:
     """`project add <slug> <name> [--root PATH]` -> `project <slug> created`."""
-    created = store.create_project(args.slug, args.name, root=args.root)
+    created = store.create_project(args.slug, args.name, root=args.root, with_prd=True)
     print(f"project {created['slug']} created")
     return EXIT_OK
 

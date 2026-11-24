@@ -670,6 +670,8 @@ check(prdNodes.length === 1 && text(prdNodes[0]) === "PRD",
 check(String((prdNodes[0].props.style || {}).color || "").toLowerCase() === "#eab308",
   "flags: the PRD badge is yellow")
 const docCard = (ref) => JSON.stringify(cards().find((node) => node.props["data-ref"] === ref) || {})
+check(cardRefs()[0] === "DOC1" && cardRefs().indexOf("DOC2") < cardRefs().indexOf("DOC3"),
+  "flags: the pinned document sorts first, the PRD ahead of the rest (got " + cardRefs().join(",") + ")")
 check(docCard("DOC1").includes("card-pin") && !docCard("DOC1").includes("card-prd"),
   "flags: DOC1 is pinned and is not the PRD")
 check(docCard("DOC2").includes("card-prd") && !docCard("DOC2").includes("card-pin"),
