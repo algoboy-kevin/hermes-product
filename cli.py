@@ -147,6 +147,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_add.add_argument("--rationale", default=None, help="Why it exists (R#, required at approved)")
     p_add.add_argument("--phase", default=None, help="Target release (R#, F#)")
     p_add.add_argument("--notes", default=None, help="Short note")
+    p_add.add_argument("--origin", default=None,
+                       help="owner|derived|import: who ruled on it (R#, F#, S#;"
+                            " default derived)")
     p_add.add_argument("--hypothesis-ref", dest="hypothesis_ref", default=None,
                        help="The claim this requirement tests (R#)")
     p_add.add_argument("--legacy", action="store_true", default=None,
@@ -228,6 +231,9 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_list.add_argument("kind", nargs="?", default=None, metavar="{R,A,F,S}",
                         help="Only this kind (default: R, then F, then S, then A)")
     p_list.add_argument("--status", default=None, help="Only entries in this state")
+    p_list.add_argument("--origin", default=None,
+                        help="Only R#, F#, S# entries with this provenance:"
+                             " owner|derived|import")
     p_list.add_argument("--limit", type=int, default=None, help="At most N lines")
     p_list.add_argument("--json", dest="list_json", action="store_true", default=False,
                         help="Print one JSON object instead of one line per item")
@@ -483,14 +489,14 @@ LINE_BUILDERS = {
 SHOW_ORDER: dict[str, tuple[str, ...]] = {
     "requirement": ("id", "title", "statement", "rationale", "priority", "phase", "status",
                     "status_reason", "superseded_by", "blocked", "blocked_reason",
-                    "hypothesis_ref", "legacy", "prd_ref", "notes", "updated_at"),
+                    "hypothesis_ref", "legacy", "prd_ref", "notes", "origin", "updated_at"),
     "criterion": ("id", "requirement_id", "text", "status", "evidence", "evidence_level",
                   "notes", "updated_at"),
     "feature": ("id", "slug", "title", "layer", "status", "status_reason", "phase",
                 "description", "infra", "paths", "blocked", "blocked_reason", "notes",
-                "updated_at"),
+                "origin", "updated_at"),
     "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
-             "blocked", "blocked_reason", "notes", "updated_at"),
+             "blocked", "blocked_reason", "notes", "origin", "updated_at"),
     "doc": ("id", "title", "kind", "summary", "status", "superseded_by", "notes",
             "updated_at"),
 }
@@ -575,6 +581,7 @@ _ADD_FLAG_FIELDS = {
     "rationale": "rationale",
     "phase": "phase",
     "notes": "notes",
+    "origin": "origin",
     "hypothesis_ref": "hypothesis_ref",
     "legacy": "legacy",
     "prd_ref": "prd_ref",
@@ -595,6 +602,8 @@ def _cmd_add(args: argparse.Namespace) -> int:
     kind = model.kind_for(args.kind)
     fields: dict[str, Any] = {}
     if kind == "doc":
+        if getattr(args, "origin", None) is not None:
+            raise model.ValidationError("--origin is not a field of add DOC")
         for name in ("title", "summary", "notes", "body_file", "body", "body_ref"):
             value = getattr(args, name, None)
             if value is not None:
@@ -665,7 +674,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
             f"list accepts R, A, F, S or DOC, got {args.kind!r}"
         )
     project = _project(args)
-    items = store.list_entities(project, args.kind, status=args.status, limit=args.limit)
+    items = store.list_entities(project, args.kind, status=args.status,
+                                origin=args.origin, limit=args.limit)
     if args.list_json:
         rows: list[dict] = []
         for item in items:

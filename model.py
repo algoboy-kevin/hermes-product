@@ -36,6 +36,12 @@ DOC_SUMMARY_MAX = 400
 #: (S1 section 3.1). A# has none (one sentence plus evidence); DOC# keeps its own body file.
 BODY_KINDS = ("requirement", "feature", "spec")
 
+#: who ruled on an R#/F#/S# row: the owner, a derived row, or an import (HP-33)
+ORIGINS = ("owner", "derived", "import")
+
+#: the kinds whose row carries `origin` (A# and DOC# have none)
+ORIGIN_KINDS = ("requirement", "feature", "spec")
+
 STATUSES: dict[str, tuple[str, ...]] = {
     "requirement": ("draft", "approved", "in_progress", "done", "dropped"),
     "criterion": ("not_run", "passed", "failed", "waived"),
@@ -161,6 +167,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "legacy": {"type": "bool"},
         "prd_ref": {"type": "text"},
         "notes": {"type": "text"},
+        "origin": {"type": _ENUM, "values": ORIGINS},
         "body": {"type": "body"},
     },
     "criterion": {
@@ -187,6 +194,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "blocked": {"type": "bool"},
         "blocked_reason": {"type": "text"},
         "notes": {"type": "text"},
+        "origin": {"type": _ENUM, "values": ORIGINS},
         "body": {"type": "body"},
     },
     "spec": {
@@ -199,6 +207,7 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
         "blocked": {"type": "bool"},
         "blocked_reason": {"type": "text"},
         "notes": {"type": "text"},
+        "origin": {"type": _ENUM, "values": ORIGINS},
         "body": {"type": "body"},
     },
     "doc": {
@@ -219,11 +228,11 @@ FIELD_RULES: dict[str, dict[str, dict]] = {
 #: what `add <KIND>` accepts (never status: the initial state is fixed)
 ADD_FIELDS: dict[str, tuple[str, ...]] = {
     "requirement": ("title", "statement", "rationale", "priority", "phase", "notes",
-                    "hypothesis_ref", "legacy", "prd_ref", "body"),
+                    "origin", "hypothesis_ref", "legacy", "prd_ref", "body"),
     "criterion": ("requirement_id", "text", "notes"),
     "feature": ("title", "layer", "slug", "phase", "description", "infra", "paths", "notes",
-                "body"),
-    "spec": ("title", "summary", "paths", "notes", "body"),
+                "origin", "body"),
+    "spec": ("title", "summary", "paths", "notes", "origin", "body"),
     "doc": ("title", "kind", "summary", "notes", "body_ref", "pinned", "is_prd"),
 }
 
@@ -231,12 +240,13 @@ ADD_FIELDS: dict[str, tuple[str, ...]] = {
 SET_FIELDS: dict[str, tuple[str, ...]] = {
     "requirement": ("title", "statement", "rationale", "priority", "phase", "status",
                     "status_reason", "superseded_by", "blocked", "blocked_reason",
-                    "hypothesis_ref", "legacy", "prd_ref", "notes", "body"),
+                    "hypothesis_ref", "legacy", "prd_ref", "notes", "origin", "body"),
     "criterion": ("text", "status", "evidence", "evidence_level", "notes"),
     "feature": ("slug", "title", "layer", "status", "status_reason", "phase",
-                "description", "infra", "paths", "blocked", "blocked_reason", "notes", "body"),
+                "description", "infra", "paths", "blocked", "blocked_reason", "notes",
+                "origin", "body"),
     "spec": ("title", "summary", "status", "status_reason", "superseded_by", "paths",
-             "blocked", "blocked_reason", "notes", "body"),
+             "blocked", "blocked_reason", "notes", "origin", "body"),
     "doc": ("title", "kind", "summary", "status", "superseded_by", "notes", "body_ref",
             "pinned", "is_prd"),
 }
@@ -250,10 +260,10 @@ REQUIRED_AT_ADD: dict[str, tuple[str, ...]] = {
 }
 
 DEFAULTS: dict[str, dict[str, Any]] = {
-    "requirement": {"blocked": 0, "legacy": 0},
+    "requirement": {"blocked": 0, "legacy": 0, "origin": "derived"},
     "criterion": {},
-    "feature": {"blocked": 0, "infra": 0},
-    "spec": {"blocked": 0},
+    "feature": {"blocked": 0, "infra": 0, "origin": "derived"},
+    "spec": {"blocked": 0, "origin": "derived"},
     "doc": {"pinned": 0, "is_prd": 0},
 }
 

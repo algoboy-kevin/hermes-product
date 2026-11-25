@@ -37,6 +37,7 @@ What the product must do, and why. Never the technology.
 | hypothesis_ref | text | N | Optional link to the claim this requirement tests (any tracker or document) |
 | legacy | bool | Y | Default 0. Imported from an existing system without full detail; lint downgrades some errors to warnings |
 | prd_ref | text | N | PRD anchor, such as `PRD.md#goals` |
+| origin | enum | N | `owner`, `derived`, `import`: who ruled on this row (R#, F#, S# only). Default `derived`; a migration backfills `owner` where the notes recorded an owner ruling, else `import` |
 | body | longtext | N | The full text that defines the requirement (section 3.1). Never printed by `list`, `trace` or `next` |
 
 Links: features (F#, many-to-many), specs (S#), criteria (A#, one-to-many, child records), depends_on (R#), docs (DOC#), external.
@@ -81,6 +82,7 @@ A capability that delivers requirements; a node in the dependency graph.
 | infra | bool | Y | Default 0. A feature with no requirement of its own (plumbing); exempt from `feature_without_requirement` |
 | paths | list text | N | Code paths (directories or files) that implement it. Enables the coverage check ([R15]) |
 | blocked / blocked_reason | bool / text | Y / N | As for R# |
+| origin | enum | N | `owner`, `derived`, `import`: who ruled on this row (as for R#) |
 | body | longtext | N | The full text that defines the capability and its boundary (section 3.1) |
 
 Links: requirements (R#), specs (S#), depends_on (F# to F#, each edge with an `optional` flag), docs (DOC#), external.
@@ -96,6 +98,7 @@ How something is built or must behave, precisely enough to implement and verify.
 | status_reason / superseded_by | text / ref S | N | `superseded_by` required when `superseded` |
 | paths | list text | N | Code paths it describes |
 | blocked / blocked_reason | bool / text | Y / N | As for R# |
+| origin | enum | N | `owner`, `derived`, `import`: who ruled on this row (as for R#) |
 | body | longtext | N | The full contract (section 3.1). A spec with no body is visibly thin |
 
 The full text of a spec is its `body`. A DOC linked to a spec holds context about it (a design review, a run report), not the spec itself. Schema v1 stored spec text as a DOC of kind `spec`; those rows keep working and are folded into bodies by a separate migration.

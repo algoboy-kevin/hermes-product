@@ -26,14 +26,14 @@ EXPECTED_FILES = {
 }
 REQ_KEYS = ["id", "title", "statement", "rationale", "priority", "phase", "status",
             "status_reason", "superseded_by", "blocked", "blocked_reason",
-            "hypothesis_ref", "legacy", "prd_ref", "notes", "updated_at"]
+            "hypothesis_ref", "legacy", "prd_ref", "notes", "origin", "updated_at"]
 A_KEYS = ["id", "requirement_id", "text", "status", "evidence", "evidence_level",
           "notes", "updated_at"]
 F_KEYS = ["id", "slug", "title", "layer", "status", "status_reason", "phase",
           "description", "infra", "paths", "blocked", "blocked_reason", "notes",
-          "updated_at"]
+          "origin", "updated_at"]
 S_KEYS = ["id", "title", "summary", "status", "status_reason", "superseded_by",
-          "paths", "blocked", "blocked_reason", "notes", "updated_at"]
+          "paths", "blocked", "blocked_reason", "notes", "origin", "updated_at"]
 
 
 def load_yaml(path: Path):

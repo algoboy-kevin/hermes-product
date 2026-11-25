@@ -284,11 +284,29 @@ def _migrate_v5_flag_the_prds(con: sqlite3.Connection) -> None:
     con.execute("UPDATE doc SET is_prd = 1, pinned = 1 WHERE kind = 'prd'")
 
 
+def _migrate_v6_origin(con: sqlite3.Connection) -> None:
+    """v6: ``origin`` on requirement, feature and spec: who ruled on the row.
+
+    ``owner | derived | import``, validated by the model (no DB CHECK: a new value
+    must not need a table rebuild). Backfill: a row whose notes recorded an owner
+    ruling (``origin: owner...``) is ``owner``; everything else was bulk-imported
+    and comes out ``import``. New rows default to ``derived`` (model.DEFAULTS).
+    """
+    for table in ("requirement", "feature", "spec"):
+        con.execute(f"ALTER TABLE {table} ADD COLUMN origin TEXT")
+        con.execute(
+            f"UPDATE {table} SET origin = CASE WHEN notes LIKE 'origin: owner%'"
+            " THEN 'owner' ELSE 'import' END"
+        )
+
+
 MIGRATIONS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (2, "body column on requirement, feature and spec", _migrate_v2_entity_body),
     (3, "doc.kind without a CHECK (kinds are validated by the model)", _migrate_v3_open_doc_kinds),
     (4, "doc.pinned and doc.is_prd flags", _migrate_v4_doc_flags),
     (5, "flag and pin the existing PRD documents", _migrate_v5_flag_the_prds),
+    (6, "origin column on requirement, feature and spec (owner | derived | import)",
+     _migrate_v6_origin),
 ]
 
 def latest_version() -> int:
@@ -1233,22 +1251,36 @@ def get_entity(project: str, ref: str, *, with_body: bool = False,
 
 
 def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[str] = None,
+                  origin: Optional[str] = None,
                   limit: Optional[int] = None,
                   con: Optional[sqlite3.Connection] = None) -> list[dict]:
-    """Rows of one kind (or R, F, S, A), id order, each with ``kind``/``ref``/``links``."""
+    """Rows of one kind (or R, F, S, A), id order, each with ``kind``/``ref``/``links``.
+
+    ``origin`` filters the kinds that carry the field (R#, F#, S#): a row without
+    an origin (A#, DOC#) can never match one, so it is not listed.
+    """
     own = con is None
     con = con or connect()
     try:
         if not project_exists(project, con):
             raise StoreError(f"project {project!r} does not exist")
+        if origin is not None and origin not in model.ORIGINS:
+            raise model.ValidationError(
+                f"origin must be one of {'|'.join(model.ORIGINS)}, got {origin!r}"
+            )
         kinds = [model.kind_for(kind)] if kind else [*LIST_ORDER, "doc"]
         found: list[dict] = []
         for one in kinds:
+            if origin is not None and one not in model.ORIGIN_KINDS:
+                continue
             sql = f"SELECT * FROM {ENTITY_TABLE[one]} WHERE project = ?"
             params: list[Any] = [project]
             if status is not None:
                 sql += " AND status = ?"
                 params.append(status)
+            if origin is not None:
+                sql += " AND origin = ?"
+                params.append(origin)
             sql += " ORDER BY id"
             for row in con.execute(sql, tuple(params)):
                 item = with_body_size(dict(row))

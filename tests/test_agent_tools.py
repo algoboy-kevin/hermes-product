@@ -52,7 +52,7 @@ TOOL_PROPERTIES = {
     "product_trace": {"ref", "depth", "project"},
     "product_next": {"limit", "project"},
     "product_lint": {"project"},
-    "product_list": {"kind", "status", "limit", "project"},
+    "product_list": {"kind", "status", "origin", "limit", "project"},
 }
 TOOL_REQUIRED = {
     "product_show": ["ref"],

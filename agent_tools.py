@@ -139,6 +139,11 @@ PRODUCT_LIST_SCHEMA = {
                 "description": "Only this kind (default: R, then F, then S, then A).",
             },
             "status": {"type": "string", "description": "Only entries in this state."},
+            "origin": {
+                "type": "string",
+                "enum": ["owner", "derived", "import"],
+                "description": "Only R#, F#, S# entries with this provenance.",
+            },
             "limit": {"type": "integer", "description": "At most N lines."},
             "project": _PROJECT_PROP,
         },
@@ -227,6 +232,8 @@ def _argv_for_list(args: dict[str, Any]) -> list[str]:
         argv.append(str(args["kind"]))
     if args.get("status"):
         argv += ["--status", str(args["status"])]
+    if args.get("origin"):
+        argv += ["--origin", str(args["origin"])]
     if args.get("limit") is not None:
         argv += ["--limit", str(args["limit"])]
     return argv + _project_flag(args)

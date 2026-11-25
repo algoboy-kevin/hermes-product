@@ -78,14 +78,15 @@ ENTITY_FILES = (
 EXPORT_COLUMNS: dict[str, tuple[str, ...]] = {
     "requirement": ("id", "title", "statement", "rationale", "priority", "phase", "status",
                     "status_reason", "superseded_by", "blocked", "blocked_reason",
-                    "hypothesis_ref", "legacy", "prd_ref", "body", "notes", "updated_at"),
+                    "hypothesis_ref", "legacy", "prd_ref", "body", "notes", "origin",
+                    "updated_at"),
     "criterion": ("id", "requirement_id", "text", "status", "evidence", "evidence_level",
                   "notes", "updated_at"),
     "feature": ("id", "slug", "title", "layer", "status", "status_reason", "phase",
                 "description", "infra", "paths", "blocked", "blocked_reason", "body", "notes",
-                "updated_at"),
+                "origin", "updated_at"),
     "spec": ("id", "title", "summary", "status", "status_reason", "superseded_by", "paths",
-             "blocked", "blocked_reason", "body", "notes", "updated_at"),
+             "blocked", "blocked_reason", "body", "notes", "origin", "updated_at"),
     "doc": ("id", "title", "kind", "summary", "body", "body_ref", "body_hash", "status",
             "superseded_by", "notes", "updated_at"),
 }
@@ -391,6 +392,10 @@ def _normalize_entity(kind: str, raw: Any, where: str) -> dict:
         raise store.StoreError(f"{where}: id is required")
     if kind == "criterion" and values.get("requirement_id") is None:
         raise store.StoreError(f"{where}: requirement_id is required")
+    if kind in model.ORIGIN_KINDS and values.get("origin") is None:
+        # an OLD export predates the column: such rows arrived from outside the
+        # store (bulk import), so they come out `import`, never `derived`
+        values["origin"] = "import"
     if kind == "doc" and "body" in raw and "body_ref" in raw:
         raise store.StoreError(f"{where}: pass either body or body_ref, not both")
     return values
