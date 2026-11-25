@@ -97,7 +97,7 @@ def _apply_pending_migrations() -> None:
 _apply_pending_migrations()
 
 PLUGIN = "product"
-VERSION = "0.0.1"
+VERSION = "0.1.0"
 
 KINDS = ("requirement", "criterion", "feature", "spec", "doc")
 

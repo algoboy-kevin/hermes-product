@@ -1,5 +1,5 @@
 name: product
-version: 0.0.1
+version: 0.1.0
 description: "Product knowledge for a project — requirements, acceptance criteria, features, specs and supporting documents as linked entries (R#/A#/F#/S#/DOC#) behind a compact `hermes product` CLI."
 author: kevin
 kind: standalone
