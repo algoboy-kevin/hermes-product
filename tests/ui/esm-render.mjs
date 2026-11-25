@@ -668,8 +668,8 @@ check(String(pinNodes[0].props.className || "").includes("absolute")
   && String(pinNodes[0].props.className || "").includes("right-"),
   "flags: the pin sits in the card's top-right corner")
 const prdNodes = byTestId("card-prd")
-check(prdNodes.length === 1 && text(prdNodes[0]).trim() === "PRD",
-  "flags: one card carries a PRD badge (got " + prdNodes.length + ")")
+check(prdNodes.length === 1 && text(prdNodes[0]).trim() === "prd",
+  "flags: one card carries a prd badge (got " + prdNodes.length + ")")
 check(String((prdNodes[0].props.style || {}).color || "").toLowerCase() === "#eab308",
   "flags: the PRD badge is yellow")
 const docCard = (ref) => JSON.stringify(cards().find((node) => node.props["data-ref"] === ref) || {})
@@ -1068,8 +1068,8 @@ check(JSON.stringify(kindBadges().map((node) => node.props["data-kind"])) ===
   "kind badge: data-kind names the document's kind (got " +
   JSON.stringify(kindBadges().map((node) => node.props["data-kind"])) + ")")
 check(JSON.stringify(kindBadges().map((node) => text(node).trim())) ===
-  JSON.stringify(["REPORT", "RELEASE NOTES", "RUN LOG"]),
-  "kind badge: the label is the kind in caps, underscores as spaces (got " +
+  JSON.stringify(["report", "release notes", "run log"]),
+  "kind badge: the label is the kind in lower case, underscores as spaces (got " +
   JSON.stringify(kindBadges().map((node) => text(node).trim())) + ")")
 check(JSON.stringify(badgeColors()) === JSON.stringify(["#db6d28", "#3fb950", "#6e7681"]),
   "kind badge: each kind gets its own colour (got " + JSON.stringify(badgeColors()) + ")")

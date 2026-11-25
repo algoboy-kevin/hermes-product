@@ -203,16 +203,16 @@ test("DOC_KIND_COLOR names one colour per doc kind and keeps the PRD yellow", ()
   assert.equal(new Set(Object.values(core.DOC_KIND_COLOR)).size, core.DOC_KINDS.length)
 })
 
-test("kindBadge labels the kind in caps with underscores as spaces", () => {
-  assert.deepEqual(core.kindBadge(doc(1, "prd")), { label: "PRD", color: "#eab308" })
-  assert.deepEqual(core.kindBadge(doc(1, "release_notes")), { label: "RELEASE NOTES", color: "#3fb950" })
-  assert.deepEqual(core.kindBadge(doc(1, "run_log")), { label: "RUN LOG", color: "#6e7681" })
-  assert.deepEqual(core.kindBadge(doc(1, "report")), { label: "REPORT", color: "#db6d28" })
+test("kindBadge labels the kind in lower case with underscores as spaces", () => {
+  assert.deepEqual(core.kindBadge(doc(1, "prd")), { label: "prd", color: "#eab308" })
+  assert.deepEqual(core.kindBadge(doc(1, "release_notes")), { label: "release notes", color: "#3fb950" })
+  assert.deepEqual(core.kindBadge(doc(1, "run_log")), { label: "run log", color: "#6e7681" })
+  assert.deepEqual(core.kindBadge(doc(1, "report")), { label: "report", color: "#db6d28" })
 })
 
 test("kindBadge falls back to the `other` colour for an unknown kind", () => {
   assert.deepEqual(core.kindBadge(doc(1, "bogus")),
-    { label: "BOGUS", color: core.DOC_KIND_COLOR.other })
+    { label: "bogus", color: core.DOC_KIND_COLOR.other })
 })
 
 test("kindBadge is null for a non-document or a document with no kind", () => {
@@ -223,7 +223,7 @@ test("kindBadge is null for a non-document or a document with no kind", () => {
 })
 
 test("kindBadge still badges a card whose only flag is is_prd", () => {
-  assert.deepEqual(core.kindBadge({ ref: "DOC2", is_prd: true }), { label: "PRD", color: "#eab308" })
+  assert.deepEqual(core.kindBadge({ ref: "DOC2", is_prd: true }), { label: "prd", color: "#eab308" })
 })
 
 test("toggleKind turns All off on the first check", () => {

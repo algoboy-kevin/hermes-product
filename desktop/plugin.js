@@ -213,7 +213,7 @@ const DOC_KIND_COLOR = {
 /**
  * The kind badge a document card shows beside its state chip (HP-38): `null` for a
  * non-document or a document with no kind, else `{label, color}`. The label is the
- * kind in caps with underscores as spaces (`RELEASE NOTES`); an unknown kind falls
+ * kind in lower case with underscores as spaces (`release notes`); an unknown kind falls
  * back to `other` so a new enum value can never render an unstyled pill.
  * `is_prd` implies `prd`: the API always sets the kind, but the flag alone used to
  * be enough to show the badge and still is.
@@ -223,7 +223,7 @@ function kindBadge(entry) {
   const kind = entry.kind || (entry.is_prd ? "prd" : null)
   if (!kind) return null
   return {
-    label: String(kind).replace(/_/g, " ").toUpperCase(),
+    label: String(kind).replace(/_/g, " ").toLowerCase(),
     color: DOC_KIND_COLOR[kind] || DOC_KIND_COLOR.other
   }
 }
@@ -841,7 +841,7 @@ function Card({ entry, kind, onSelect, onTogglePin }) {
         h("span", { style: { width: 6, height: 6, borderRadius: 999, background: tone, display: "inline-block" } }),
         stateLabel(entry.status)),
       // Every document card carries its kind beside the state chip (HP-38): the PRD keeps
-      // its yellow `PRD` pill, the other ten kinds get their own colour from the same map.
+      // its yellow `prd` pill, the other ten kinds get their own colour from the same map.
       (() => {
         const badge = kindBadge(entry)
         if (!badge) return null
