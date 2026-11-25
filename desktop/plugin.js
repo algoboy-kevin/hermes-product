@@ -194,6 +194,40 @@ function filterByState(entries, state) {
 const DOC_KINDS = ["prd", "spec", "context", "research", "design", "api", "runbook", "report",
                    "release_notes", "run_log", "other"]
 
+//: one colour per doc kind for the card badge (HP-38): the PRD keeps the #eab308 it has
+//: always carried; the rest are distinct shades from the same palette family.
+const DOC_KIND_COLOR = {
+  prd: "#eab308",
+  spec: "#58a6ff",
+  context: "#8b949e",
+  research: "#d2a8ff",
+  design: "#a371f7",
+  api: "#39c5cf",
+  runbook: "#f0883e",
+  report: "#db6d28",
+  release_notes: "#3fb950",
+  run_log: "#6e7681",
+  other: "#b1bac4"
+}
+
+/**
+ * The kind badge a document card shows beside its state chip (HP-38): `null` for a
+ * non-document or a document with no kind, else `{label, color}`. The label is the
+ * kind in caps with underscores as spaces (`RELEASE NOTES`); an unknown kind falls
+ * back to `other` so a new enum value can never render an unstyled pill.
+ * `is_prd` implies `prd`: the API always sets the kind, but the flag alone used to
+ * be enough to show the badge and still is.
+ */
+function kindBadge(entry) {
+  if (!entry) return null
+  const kind = entry.kind || (entry.is_prd ? "prd" : null)
+  if (!kind) return null
+  return {
+    label: String(kind).replace(/_/g, " ").toUpperCase(),
+    color: DOC_KIND_COLOR[kind] || DOC_KIND_COLOR.other
+  }
+}
+
 /**
  * The Docs kind filter (HP-29): an empty selection (or "all") is every row, otherwise
  * only the checked kinds. Rows carry the doc kind in `kind` (the API's doc cards do).
@@ -419,6 +453,8 @@ export const core = {
   tabCounts,
   filterByState,
   DOC_KINDS,
+  DOC_KIND_COLOR,
+  kindBadge,
   filterByKind,
   kindCounts,
   toggleKind,
@@ -804,19 +840,25 @@ function Card({ entry, kind, onSelect, onTogglePin }) {
       },
         h("span", { style: { width: 6, height: 6, borderRadius: 999, background: tone, display: "inline-block" } }),
         stateLabel(entry.status)),
-      entry.is_prd
-        ? h("span", {
-          // which document IS the PRD, now that the PRD has no tab of its own
-          "data-testid": "card-prd",
-          // same pill as the state chip beside it — same radius, padding, size and dot; only
-          // the colour and the label differ, so the row reads as one row of facts
+      // Every document card carries its kind beside the state chip (HP-38): the PRD keeps
+      // its yellow `PRD` pill, the other ten kinds get their own colour from the same map.
+      (() => {
+        const badge = kindBadge(entry)
+        if (!badge) return null
+        return h("span", {
+          // `card-prd` is what the old PRD-only badge was called and stays that; every
+          // other document kind is `card-kind`
+          "data-testid": entry.is_prd ? "card-prd" : "card-kind",
+          "data-kind": entry.kind || (entry.is_prd ? "prd" : ""),
+          // same pill as the state chip beside it — same radius, padding, size and dot;
+          // only the colour and the label differ, so the row reads as one row of facts
           className: "inline-flex items-center gap-1 rounded-full bg-(--ui-bg-quaternary) px-1.5 py-px text-[0.625rem] font-medium",
-          style: { color: "#eab308" }
+          style: { color: badge.color }
         },
           // the same 6px dot the state chip carries, in the badge's own colour
-          h("span", { style: { width: 6, height: 6, borderRadius: 999, background: "#eab308", display: "inline-block" } }),
-          "PRD")
-        : null),
+          h("span", { style: { width: 6, height: 6, borderRadius: 999, background: badge.color, display: "inline-block" } }),
+          badge.label)
+      })()),
 
     h("div", { className: "line-clamp-2 text-xs font-semibold leading-snug" }, entry.title || entry.ref),
 

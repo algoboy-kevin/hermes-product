@@ -1056,6 +1056,26 @@ check(one("kind-filter-all").props["data-checked"] === "1"
   "kind filter: All is checked by default, with a check mark")
 check(cardRefs().join(",") === "DOC1,DOC2,DOC3",
   "kind filter: default shows every doc (got " + cardRefs().join(",") + ")")
+
+// -- the kind badge on every document card (HP-38, A43) ----------------------
+const kindBadges = () => byTestId("card-kind")
+const badgeColors = () =>
+  kindBadges().map((node) => String((node.props.style || {}).color || "").toLowerCase())
+check(kindBadges().length === 3 && byTestId("card-prd").length === 0,
+  "kind badge: every real document card carries one (got " + kindBadges().length + ")")
+check(JSON.stringify(kindBadges().map((node) => node.props["data-kind"])) ===
+  JSON.stringify(["report", "release_notes", "run_log"]),
+  "kind badge: data-kind names the document's kind (got " +
+  JSON.stringify(kindBadges().map((node) => node.props["data-kind"])) + ")")
+check(JSON.stringify(kindBadges().map((node) => text(node).trim())) ===
+  JSON.stringify(["REPORT", "RELEASE NOTES", "RUN LOG"]),
+  "kind badge: the label is the kind in caps, underscores as spaces (got " +
+  JSON.stringify(kindBadges().map((node) => text(node).trim())) + ")")
+check(JSON.stringify(badgeColors()) === JSON.stringify(["#db6d28", "#3fb950", "#6e7681"]),
+  "kind badge: each kind gets its own colour (got " + JSON.stringify(badgeColors()) + ")")
+check(kindBadges().every((node) => String(node.props.className || "").includes("rounded-full")
+  && String(node.props.className || "").includes("text-[0.625rem]")),
+  "kind badge: the same pill as the state chip")
 check(kindItems().length === pluginModule.core.DOC_KINDS.length,
   "kind filter: one row per enum kind (got " + kindItems().length + ")")
 check(kindItems().map((node) => node.props["data-kind"]).join(",") === pluginModule.core.DOC_KINDS.join(","),
@@ -1119,6 +1139,8 @@ check(tabCount("all") === 3 && tabCount("current") === 3 && tabCount("superseded
 // scope: other decks carry no kind filter; the selection resets on a project switch
 await clickView("requirements")
 check(one("kind-filter") === undefined, "kind filter: only the Docs deck carries it")
+check(kindBadges().length === 0 && byTestId("card-prd").length === 0,
+  "kind badge: requirement cards carry none")
 await clickView("docs")
 await clickNode(kindItemOf("report"), "check report before switching project")
 const mobileItem = byId("project-item").find((node) => node.props["data-slug"] === "mobile")
@@ -1128,6 +1150,13 @@ await clickNode(shopItem, "switch back")
 check(one("kind-filter-all").props["data-checked"] === "1"
   && cardRefs().join(",") === "DOC1,DOC2,DOC3",
   "kind filter: the selection is UI state and resets on a project switch")
+
+// A44: only document cards carry a kind badge — the other four decks carry none
+for (const view of ["acceptance", "features", "specs"]) {
+  await clickView(view)
+  check(kindBadges().length === 0 && byTestId("card-prd").length === 0,
+    "kind badge: " + view + " cards carry none")
+}
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)
