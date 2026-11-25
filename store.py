@@ -707,6 +707,9 @@ ENTITY_TABLE = {
 #: list order when no kind is given (S4 section 1 examples: R, then F, then S, then A)
 LIST_ORDER = ("requirement", "feature", "spec", "criterion")
 
+#: the kinds whose row carries `phase` (S#, A# and DOC# have none; HP-36)
+PHASE_KINDS = ("requirement", "feature")
+
 
 def ref_for(kind: str, entity_id: int) -> str:
     """``("requirement", 3)`` -> ``R3``."""
@@ -1252,12 +1255,16 @@ def get_entity(project: str, ref: str, *, with_body: bool = False,
 
 def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[str] = None,
                   origin: Optional[str] = None,
+                  phase: Optional[str] = None,
                   limit: Optional[int] = None,
                   con: Optional[sqlite3.Connection] = None) -> list[dict]:
     """Rows of one kind (or R, F, S, A), id order, each with ``kind``/``ref``/``links``.
 
     ``origin`` filters the kinds that carry the field (R#, F#, S#): a row without
-    an origin (A#, DOC#) can never match one, so it is not listed.
+    an origin (A#, DOC#) can never match one, so it is not listed.  ``phase`` is
+    a field of R# and F# only and works the same way (exact match); with an
+    explicit kind outside ``PHASE_KINDS`` it is refused, and an empty phase is
+    refused ("phase must not be empty").
     """
     own = con is None
     con = con or connect()
@@ -1268,10 +1275,16 @@ def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[
             raise model.ValidationError(
                 f"origin must be one of {'|'.join(model.ORIGINS)}, got {origin!r}"
             )
+        if phase == "":
+            raise model.ValidationError("phase must not be empty")
         kinds = [model.kind_for(kind)] if kind else [*LIST_ORDER, "doc"]
+        if phase is not None and kind is not None and kinds[0] not in PHASE_KINDS:
+            raise model.ValidationError("phase is a field of R and F only")
         found: list[dict] = []
         for one in kinds:
             if origin is not None and one not in model.ORIGIN_KINDS:
+                continue
+            if phase is not None and one not in PHASE_KINDS:
                 continue
             sql = f"SELECT * FROM {ENTITY_TABLE[one]} WHERE project = ?"
             params: list[Any] = [project]
@@ -1281,6 +1294,9 @@ def list_entities(project: str, kind: Optional[str] = None, *, status: Optional[
             if origin is not None:
                 sql += " AND origin = ?"
                 params.append(origin)
+            if phase is not None:
+                sql += " AND phase = ?"
+                params.append(phase)
             sql += " ORDER BY id"
             for row in con.execute(sql, tuple(params)):
                 item = with_body_size(dict(row))

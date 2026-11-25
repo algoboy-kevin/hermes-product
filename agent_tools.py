@@ -103,6 +103,10 @@ PRODUCT_NEXT_SCHEMA = {
         "type": "object",
         "properties": {
             "limit": {"type": "integer", "description": "At most N lines per list (default 10)."},
+            "phase": {
+                "type": "string",
+                "description": "Only features in this release (exact match).",
+            },
             "project": _PROJECT_PROP,
         },
         "required": [],
@@ -143,6 +147,10 @@ PRODUCT_LIST_SCHEMA = {
                 "type": "string",
                 "enum": ["owner", "derived", "import"],
                 "description": "Only R#, F#, S# entries with this provenance.",
+            },
+            "phase": {
+                "type": "string",
+                "description": "Only R# and F# entries in this release (exact match).",
             },
             "limit": {"type": "integer", "description": "At most N lines."},
             "project": _PROJECT_PROP,
@@ -219,6 +227,8 @@ def _argv_for_next(args: dict[str, Any]) -> list[str]:
     argv = ["next"]
     if args.get("limit") is not None:
         argv += ["--limit", str(args["limit"])]
+    if args.get("phase") is not None:
+        argv += ["--phase", str(args["phase"])]
     return argv + _project_flag(args)
 
 
@@ -234,6 +244,8 @@ def _argv_for_list(args: dict[str, Any]) -> list[str]:
         argv += ["--status", str(args["status"])]
     if args.get("origin"):
         argv += ["--origin", str(args["origin"])]
+    if args.get("phase") is not None:
+        argv += ["--phase", str(args["phase"])]
     if args.get("limit") is not None:
         argv += ["--limit", str(args["limit"])]
     return argv + _project_flag(args)

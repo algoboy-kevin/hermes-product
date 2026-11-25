@@ -234,6 +234,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_list.add_argument("--origin", default=None,
                         help="Only R#, F#, S# entries with this provenance:"
                              " owner|derived|import")
+    p_list.add_argument("--phase", default=None,
+                        help="Only R# and F# entries in this release (exact match)")
     p_list.add_argument("--limit", type=int, default=None, help="At most N lines")
     p_list.add_argument("--json", dest="list_json", action="store_true", default=False,
                         help="Print one JSON object instead of one line per item")
@@ -254,6 +256,8 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     )
     p_next.add_argument("--limit", type=int, default=10, metavar="N",
                         help="At most N lines per list (default 10)")
+    p_next.add_argument("--phase", default=None,
+                        help="Only features in this release (exact match)")
     _add_project_option(p_next)
     p_lint = subs.add_parser("lint", help="All checks in S2")
     p_lint.add_argument("--json", dest="json", action="store_true", default=False,
@@ -675,7 +679,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         )
     project = _project(args)
     items = store.list_entities(project, args.kind, status=args.status,
-                                origin=args.origin, limit=args.limit)
+                                origin=args.origin, phase=args.phase, limit=args.limit)
     if args.list_json:
         rows: list[dict] = []
         for item in items:
@@ -1250,7 +1254,9 @@ def _cmd_trace(args: argparse.Namespace) -> int:
 
 
 def _cmd_next(args: argparse.Namespace) -> int:
-    """`next [--limit N]` -> the ready queue and what blocks the rest (HP-6)."""
+    """`next [--limit N] [--phase vX]` -> the ready queue and what blocks the rest (HP-6)."""
+    if args.phase == "":
+        raise model.ValidationError("phase must not be empty")
     project = _project(args)
     con = store.connect()
     try:
@@ -1271,12 +1277,16 @@ def _cmd_next(args: argparse.Namespace) -> int:
         priorities = plan.effective_priority(status_by_id, req_priority, needs_map)
         for item in items:
             item["priority"] = priorities[item["id"]]
-        candidates = [item for item in items if item["status"] in ("planned", "in_progress")]
+        # HP-36: --phase restricts what is LISTED; the dependency verdicts above
+        # stay computed over every feature, so a cross-phase wait keeps its reason
+        listed = ([item for item in items if item.get("phase") == args.phase]
+                  if args.phase is not None else items)
+        candidates = [item for item in listed if item["status"] in ("planned", "in_progress")]
         needed = {needs_id for _row_id, needs_id, _optional in edges}
         unplanned = [item for item in candidates if plan.is_unplanned(item, needed)]
         hidden = {item["id"] for item in unplanned}
         ready, blocked = plan.ready_and_blocked(
-            [item for item in items if item["id"] not in hidden], mandatory, status_by_id)
+            [item for item in listed if item["id"] not in hidden], mandatory, status_by_id)
     finally:
         con.close()
     tally = f"{len(ready)} ready, {len(blocked)} blocked"

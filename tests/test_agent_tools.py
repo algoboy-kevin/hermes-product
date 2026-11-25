@@ -50,9 +50,9 @@ TOOL_NAMES = ["product_show", "product_trace", "product_next", "product_lint", "
 TOOL_PROPERTIES = {
     "product_show": {"ref", "body", "section", "max_chars", "project"},
     "product_trace": {"ref", "depth", "project"},
-    "product_next": {"limit", "project"},
+    "product_next": {"limit", "phase", "project"},
     "product_lint": {"project"},
-    "product_list": {"kind", "status", "origin", "limit", "project"},
+    "product_list": {"kind", "status", "origin", "phase", "limit", "project"},
 }
 TOOL_REQUIRED = {
     "product_show": ["ref"],
