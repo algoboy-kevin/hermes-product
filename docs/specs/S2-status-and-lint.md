@@ -49,8 +49,10 @@ Reject unknown or retired IDs in links and `superseded_by`; invalid transitions;
 | status_in_body | R#, F#, S#, DOC# | A `Status:` line in a body (outside code fences): state lives in the row's status field | Warning |
 | uncovered_path | project | Code directory or document no F#/S# `paths` entry covers (opt-in `--coverage`) | Info |
 | no_card_links | project | An `approved` or later R# or `planned` or later F#, and no `kanban` external link | Info |
+| card_without_ref | kanban card | `ready` or `running` and its body cites no R#/F#/S# (`product:` line, else a bare `R#/F#/S#` token in the first 10 body lines). Exempt: every other column (triage, blocked, ...) and a project with no linked board | Warning |
+| completed_without_review | kanban card | `completed` at or after 2026-11-25T09:00:00Z (`REVIEW_RULE_FROM`) with a `claimed` event before it and no `review_requested` event before it. Exempt: a card never claimed (closed by the parent without a run — no run to review), a card completed before the rule date, and a project with no linked board | Warning |
 
-`lint` exits non-zero when any Error is present.
+The two card checks read the boards the project is linked to (the `<board>/<card>` ids of its `kanban` external links); a project with no board reports neither. `lint` exits non-zero when any Error is present.
 
 ## 4. Derived values
 

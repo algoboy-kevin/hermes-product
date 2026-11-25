@@ -49,6 +49,23 @@ class Card(NamedTuple):
     assignee: Optional[str]
 
 
+class CardEvent(NamedTuple):
+    """One ``task_events`` row the workflow rules read (HP-35).
+
+    ``id`` orders events that share an epoch-second ``created_at``: "before"
+    means ``(created_at, id)`` before. The payload is never needed by a rule.
+    """
+
+    task_id: str
+    id: int
+    kind: str
+    created_at: int
+
+
+#: the event kinds the workflow rules (HP-35) read
+EVENT_KINDS = ("claimed", "review_requested", "completed")
+
+
 class ParsedLine(NamedTuple):
     """One card's ``product:`` lines: refs in first-seen order, then the bad tokens."""
 
@@ -271,6 +288,40 @@ def read_board_cards(board: str, *,
         )
         for row in rows
     ]
+
+
+_EVENT_COLUMNS = ("task_id", "id", "kind", "created_at")
+
+def read_board_events(board: str, *,
+                      hermes_home: Optional[Union[str, Path]] = None
+                      ) -> list[CardEvent]:
+    """Every ``claimed``/``review_requested``/``completed`` event of one board.
+
+    Same strict read-only guard as ``read_board_cards`` (a ``.backup`` copy,
+    ``mode=ro``, ``query_only``). Ordered by ``(task_id, created_at, id)`` so
+    "before" comparisons are deterministic. Raises ``KanbanReadError`` when the
+    board or its ``task_events`` table is missing or the schema is not understood.
+    """
+    with board_copy(board, hermes_home=hermes_home) as con:
+        try:
+            columns = {row["name"] for row in con.execute("PRAGMA table_info(task_events)")}
+            if not columns:
+                raise KanbanReadError(
+                    f"board {board!r}: schema not understood (no task_events table)")
+            missing = [name for name in ("task_id", "kind", "created_at") if name not in columns]
+            if missing:
+                raise KanbanReadError(
+                    f"board {board!r}: schema not understood (task_events is missing"
+                    f" {', '.join(missing)})")
+            rows = con.execute(
+                f"SELECT {', '.join(_EVENT_COLUMNS)} FROM task_events"
+                f" WHERE kind IN ({', '.join('?' * len(EVENT_KINDS))})"
+                " ORDER BY task_id, created_at, id",
+                EVENT_KINDS).fetchall()
+        except sqlite3.Error as exc:
+            raise KanbanReadError(f"board {board!r} is unreadable: {exc}") from exc
+    return [CardEvent(task_id=row["task_id"], id=row["id"], kind=row["kind"],
+                      created_at=row["created_at"]) for row in rows]
 
 
 # ---------------------------------------------------------------------- proposals

@@ -28,11 +28,13 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
 
 try:  # package submodule (Hermes plugin loader)
-    from . import code_coverage, docs_text, graph, model, scan, store
+    from . import code_coverage, docs_text, external, graph, kanban_reader, model, scan, store
 except ImportError:  # top-level module (test suite)
     import code_coverage  # type: ignore[no-redef]
     import docs_text  # type: ignore[no-redef]
+    import external  # type: ignore[no-redef]
     import graph  # type: ignore[no-redef]
+    import kanban_reader  # type: ignore[no-redef]
     import model  # type: ignore[no-redef]
     import scan  # type: ignore[no-redef]
     import store  # type: ignore[no-redef]
@@ -73,6 +75,16 @@ _WORK_REQUESTED = {
 _NO_CARD_LINKS_MESSAGE = (
     'no kanban cards linked; put a "product: F# R#" line in each card body'
     " and run: product sync --board SLUG --apply")
+
+#: a card completed on or after this epoch (2026-11-25T09:00:00Z) must have been
+#: reviewed before completion (HP-35, R23/A41: card-convention section 3)
+REVIEW_RULE_FROM = 1795597200
+
+#: the card columns a ``card_without_ref`` check speaks about (HP-35, R22/A40)
+_CARD_OPEN_STATUSES = ("ready", "running")
+
+#: a bare R#/F#/S# token in card prose (the fallback when no product: line cites one)
+_CARD_REF_RE = re.compile(r"\b[RFS]\d+\b")
 
 #: a dependent in one of these states can be at risk from its dependency
 _AT_RISK_STATES = {
@@ -283,6 +295,12 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
 
     ``kanban_links`` is the count of ``external_link`` rows whose system is
     ``kanban``: the only rows that join a store entry to a card (HP-26).
+
+    ``cards`` and ``card_events`` are the kanban side of the two workflow checks
+    (HP-35): every card of the boards the project is linked to
+    (``external.linked_boards``) and those boards' ``claimed`` /
+    ``review_requested`` / ``completed`` events. A board named by a stale link
+    (or one without ``task_events``) contributes nothing; it is never an error.
     """
     items = store.list_entities(project, con=con)      # R, F, S, A, DOC with links
     facts: dict[str, Any] = {
@@ -300,6 +318,8 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
         "kanban_links": con.execute(
             "SELECT COUNT(*) AS n FROM external_link WHERE project = ? AND system = 'kanban'",
             (project,)).fetchone()["n"],
+        "cards": [],
+        "card_events": [],
     }
     buckets = {
         "requirement": "requirements",
@@ -331,6 +351,15 @@ def load_facts(con, project: str, *, coverage: bool = False) -> dict:
         facts["bodies"].append((ref, text))
         facts["doc_problems"].extend(
             (ref, problem) for problem in scan.scan_text(text, resolver))
+    for board in external.linked_boards(con, project):
+        try:
+            facts["cards"].extend(kanban_reader.read_board_cards(board))
+        except kanban_reader.KanbanReadError:
+            continue                          # a stale link names no readable board
+        try:
+            facts["card_events"].extend(kanban_reader.read_board_events(board))
+        except kanban_reader.KanbanReadError:
+            pass                              # a board without task_events: no events
     if coverage:
         project_row = store.get_project(project, con=con) or {}
         root = project_row.get("root")
@@ -382,6 +411,12 @@ def check(facts: dict) -> list[Finding]:
         findings.append(Finding("broken_reference", "error", doc_ref, f"line {rendered}"))
     findings += _coverage_findings(facts.get("coverage"))
     findings += _card_link_findings(facts)
+    cards = facts.get("cards")
+    events = facts.get("card_events")
+    if cards is not None:
+        findings += card_without_ref(cards)
+    if cards is not None and events is not None:
+        findings += completed_without_review(cards, events)
     for spec in specs:
         findings += _thin_findings(f"S{spec['id']}", spec, "summary", spec["status"] == "superseded")
     for doc_row in docs:
@@ -483,6 +518,76 @@ def _card_link_findings(facts: dict) -> list[Finding]:
                for row in facts.get(bucket) or ()):
         return []
     return [Finding("no_card_links", "info", "project", _NO_CARD_LINKS_MESSAGE)]
+
+
+def _cites_ref(body: Optional[str]) -> bool:
+    """Does a card body cite an R#/F#/S# token (HP-35)?
+
+    The ``product:`` line first; with none, a bare ``R3``/``F7``/``S2`` token in
+    the first 10 body lines. A#/DOC# tokens do not count: the workflow records
+    what the card SERVES (R22/A40).
+    """
+    refs = kanban_reader.parse_product_line(body).refs
+    if any(ref[0] in "RFS" for ref in refs):
+        return True
+    for line in str(body or "").splitlines()[:10]:
+        if _CARD_REF_RE.search(line):
+            return True
+    return False
+
+
+def card_without_ref(cards) -> list[Finding]:
+    """card_without_ref: a ready/running card citing no R#/F#/S# (PURE, HP-35).
+
+    Workflow step 3 records what a card serves before it is worked; a card that
+    reached ``ready`` or ``running`` without one is flagged. Every other column
+    (triage, blocked, review, done, ...) is exempt. One Warning per card.
+    """
+    findings: list[Finding] = []
+    for card in cards:
+        if card.status not in _CARD_OPEN_STATUSES:
+            continue
+        if _cites_ref(card.body):
+            continue
+        findings.append(Finding(
+            "card_without_ref", "warning", str(card.id),
+            f"{card.title} is ready or running and cites no R#/F#/S#;"
+            " record it first (workflow step 3)"))
+    return findings
+
+
+def completed_without_review(cards, events) -> list[Finding]:
+    """completed_without_review: completed with no review step (PURE, HP-35).
+
+    Card-convention section 3: a delegate's returned card goes to review first.
+    A card is flagged when a ``completed`` event at or after
+    ``REVIEW_RULE_FROM`` has a ``claimed`` event before it and NO
+    ``review_requested`` event before it ("before" = ``(created_at, id)``
+    before). A card with no ``claimed`` event before its completion (closed by
+    the parent without a run) is exempt: there was no run to review. At most one
+    finding per card (its first qualifying completion).
+    """
+    by_task: dict[str, list] = {}
+    for event in events:
+        by_task.setdefault(str(event.task_id), []).append(event)
+    findings: list[Finding] = []
+    for card in cards:
+        rows = by_task.get(str(card.id)) or []
+        for done in (one for one in rows if one.kind == "completed"):
+            if done.created_at < REVIEW_RULE_FROM:
+                continue
+            before = [one for one in rows
+                      if (one.created_at, one.id) < (done.created_at, done.id)]
+            if not any(one.kind == "claimed" for one in before):
+                continue                              # never claimed: exempt
+            if any(one.kind == "review_requested" for one in before):
+                continue                              # reviewed first: clean
+            findings.append(Finding(
+                "completed_without_review", "warning", str(card.id),
+                f"{card.title} was completed without a review step"
+                " (card-convention section 3)"))
+            break                                     # one finding per card
+    return findings
 
 
 def _requirement_findings(requirement: dict, own_criteria: list[dict]) -> list[Finding]:

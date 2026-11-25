@@ -129,6 +129,23 @@ def _read_boards(boards: Sequence[str]) -> list[tuple[str, list]]:
     return board_cards
 
 
+def linked_boards(con, project: str) -> list[str]:
+    """The board slugs this project's kanban link rows name (sorted, unique).
+
+    ``sync`` writes ``external_id`` as ``<board>/<card id>``; that prefix is the
+    only place a project names a board. A row whose id has no ``/`` (older links)
+    names no board and is ignored here.
+    """
+    boards: set[str] = set()
+    for row in con.execute(
+            "SELECT external_id FROM external_link"
+            " WHERE project = ? AND system = 'kanban'", (project,)):
+        board, separator, _card_id = str(row["external_id"] or "").partition("/")
+        if separator and board:
+            boards.add(board)
+    return sorted(boards)
+
+
 def reconcile_lines(entries: Sequence[Mapping]) -> list[str]:
     """The read-only ``reconcile`` block: the cards are finished, the entry is not.
 
