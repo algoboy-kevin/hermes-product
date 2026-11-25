@@ -27,7 +27,7 @@ KIND_BY_PREFIX = {prefix: kind for kind, prefix in PREFIX.items()}
 
 #: the kinds a DOC# may declare (S1 section 7); exactly one `prd` per project
 DOC_KINDS = ("prd", "spec", "context", "research", "design", "api", "runbook", "report",
-             "other")
+             "release_notes", "run_log", "other")
 
 #: a document summary is what an agent sees by default: one or two sentences
 DOC_SUMMARY_MAX = 400

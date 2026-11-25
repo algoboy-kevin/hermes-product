@@ -64,13 +64,19 @@ def _build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
     store.create_entity("shop", "doc", {"title": "Run report", "kind": "report",
                                         "summary": "What the first run measured.",
                                         "body": "# Run 1\n\nCharged 31 cards.\n"})
+    store.create_entity("shop", "doc", {"title": "v0.1 release notes", "kind": "release_notes",
+                                        "summary": "Frozen notes for the v0.1 cut.",
+                                        "body": "# v0.1\n\nFirst cut.\n"})
+    store.create_entity("shop", "doc", {"title": "Tape load run", "kind": "run_log",
+                                        "summary": "What the 2026-11-25 tape-load run did.",
+                                        "body": "# Run\n\nLoaded the tape.\n"})
     store.link_entries("shop", "F1", "R1")
     store.link_entries("shop", "S1", "R1")
     store.link_entries("shop", "DOC1", "S1")
 
     client = _client()
-    out: dict = {"entries": {}, "bodies": {}}
-    for ref in ("R1", "A1", "F1", "S1", "S2", "DOC1"):
+    out: dict = {"entries": {}, "bodies": {}, "lists": {}}
+    for ref in ("R1", "A1", "F1", "S1", "S2", "DOC1", "DOC2", "DOC3"):
         response = client.get(f"/project/shop/entry/{ref}")
         assert response.status_code == 200, (ref, response.text)
         out["entries"][ref] = response.json()
@@ -81,6 +87,11 @@ def _build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
         response = client.get(url)
         assert response.status_code == 200, (name, response.text)
         out["bodies"][name] = response.json()
+    # the Docs deck payload the page filters client-side (HP-29): one row per doc, each
+    # carrying its `kind`, from the real list route
+    response = client.get("/project/shop/entries?kind=doc")
+    assert response.status_code == 200, response.text
+    out["lists"]["doc"] = response.json()
     return out
 
 
@@ -105,3 +116,8 @@ def test_the_fixture_has_the_shapes_that_once_crashed_the_page(monkeypatch, tmp_
     assert isinstance(requirement["links"]["features"], list)
     assert requirement["body_chars"] > 0 and generated["entries"]["S2"]["body_chars"] == 0
     assert generated["bodies"]["S1#cut"]["truncated"] is True
+    # HP-29: every doc row of the list route carries its `kind`, so the Docs kind filter
+    # can be client-side with no API change
+    docs = generated["lists"]["doc"]["entries"]
+    assert all("kind" in row for row in docs)
+    assert {row["kind"] for row in docs} == {"report", "release_notes", "run_log"}

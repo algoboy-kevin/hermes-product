@@ -92,3 +92,25 @@ def test_foreign_keys_are_on_again_after_a_migration(home: Path) -> None:
         assert con.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     finally:
         con.close()
+
+
+def test_release_notes_and_run_log_are_kinds(home: Path, capsys) -> None:
+    make_project()
+    rc, _out, err = cli(capsys, "add", "DOC", "--title", "v0.1 release notes", "--kind",
+                        "release_notes", "--summary", "Frozen notes for the v0.1 cut.")
+    assert rc == 0, err
+    assert store.get_entity("shop", "DOC1")["row"]["kind"] == "release_notes"
+    rc, _out, err = cli(capsys, "add", "DOC", "--title", "Tape load run", "--kind", "run_log",
+                        "--summary", "What the 2026-11-25 tape-load run did.")
+    assert rc == 0, err
+    assert store.get_entity("shop", "DOC2")["row"]["kind"] == "run_log"
+
+
+def test_the_refusal_message_lists_the_new_kinds(home: Path, capsys) -> None:
+    make_project()
+    assert model.DOC_KINDS.index("release_notes") < model.DOC_KINDS.index("other")
+    assert model.DOC_KINDS.index("run_log") < model.DOC_KINDS.index("other")
+    rc, _out, err = cli(capsys, "add", "DOC", "--title", "Odd one", "--kind", "memo",
+                        "--summary", "s.")
+    assert rc != 0 and "kind must be one of" in err
+    assert "release_notes" in err and "run_log" in err

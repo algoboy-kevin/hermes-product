@@ -108,7 +108,7 @@ Reference material too large for the PRD or a kanban card: a design write-up, an
 
 | Field | Type | Req. | Description |
 |---|---|---|---|
-| kind | enum | Y | `prd`, `spec`, `context`, `research`, `design`, `api`, `runbook`, `report`, `other`. Exactly one `prd` per project. `report` is a run or test report; `spec` is kept for schema-v1 rows and imports (new spec text is an S# body) |
+| kind | enum | Y | `prd`, `spec`, `context`, `research`, `design`, `api`, `runbook`, `report`, `release_notes`, `run_log`, `other`. Exactly one `prd` per project. `report` is a run or test report; `run_log` is a machine-run log; `release_notes` is the frozen notes DOC for one version; `spec` is kept for schema-v1 rows and imports (new spec text is an S# body) |
 | summary | text | Y | One or two sentences. This is what an agent sees by default |
 | body | longtext | N | Markdown stored with the project. Alternative: `body_ref` |
 | body_ref | text | N | External path or URL; the store keeps a content hash to detect drift |

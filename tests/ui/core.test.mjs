@@ -62,7 +62,7 @@ test("sortEntries breaks ties by id ascending", () => {
   assert.deepEqual(core.sortEntries(rows, REQ).map((row) => row.id), [1, 3, 6])
 })
 
-test("sortEntries lifts a pinned document, then the PRD, above the workflow order", () => {
+test("sortEntries lifts the PRD, then pinned documents, above the workflow order", () => {
   const order = ["current", "superseded"]
   const rows = [
     { id: 3, status: "current", title: "plain" },
@@ -70,8 +70,10 @@ test("sortEntries lifts a pinned document, then the PRD, above the workflow orde
     { id: 1, status: "superseded", title: "pinned old", pinned: true },
     { id: 4, status: "current", title: "pinned + prd", pinned: true, is_prd: true }
   ]
+  // bf31ba3 "Sort rule corrected to PRD, then pinned, then the rest": a PRD outranks a
+  // pinned document; within the PRD rank the tie-break stays id ascending.
   assert.deepEqual(core.sortEntries(rows, order).map((row) => row.title),
-    ["pinned + prd", "pinned old", "prd", "plain"])
+    ["prd", "pinned + prd", "pinned old", "plain"])
 })
 
 test("sortEntries orders criteria failed-first", () => {
@@ -149,6 +151,64 @@ test("filterByState keeps only the chosen state", () => {
 
 test("filterByState with nothing in that state is empty", () => {
   assert.deepEqual(core.filterByState([entry(1, "draft")], "done"), [])
+})
+
+// ------------------------------------------- filterByKind / kindCounts / toggleKind (HP-29)
+const doc = (id, kind, status = "current") =>
+  ({ ref: "DOC" + id, id, title: "doc " + id, status, kind, summary: "", links: {} })
+const DOCS = [doc(1, "report"), doc(2, "release_notes"), doc(3, "run_log"), doc(4, "report", "superseded")]
+
+test("DOC_KINDS is the model enum with the new kinds before other", () => {
+  assert.deepEqual(core.DOC_KINDS, ["prd", "spec", "context", "research", "design", "api",
+    "runbook", "report", "release_notes", "run_log", "other"])
+})
+
+test("filterByKind with nothing selected shows every row", () => {
+  assert.equal(core.filterByKind(DOCS, []).length, 4)
+  assert.equal(core.filterByKind(DOCS, ["all"]).length, 4)
+  assert.equal(core.filterByKind(DOCS, undefined).length, 4)
+})
+
+test("filterByKind keeps only the checked kinds", () => {
+  assert.deepEqual(core.filterByKind(DOCS, ["report"]).map((row) => row.id), [1, 4])
+})
+
+test("filterByKind is multi-select", () => {
+  assert.deepEqual(core.filterByKind(DOCS, ["release_notes", "run_log"]).map((row) => row.id), [2, 3])
+})
+
+test("filterByKind with a kind nothing has is empty", () => {
+  assert.deepEqual(core.filterByKind(DOCS, ["bogus"]), [])
+})
+
+test("filterByKind returns a new array", () => {
+  const rows = []
+  assert.notEqual(core.filterByKind(rows, []), rows)
+})
+
+test("kindCounts counts every kind present", () => {
+  assert.deepEqual(core.kindCounts(DOCS), { report: 2, release_notes: 1, run_log: 1 })
+})
+
+test("kindCounts on no entries is empty", () => {
+  assert.deepEqual(core.kindCounts([]), {})
+})
+
+test("toggleKind turns All off on the first check", () => {
+  assert.deepEqual(core.toggleKind([], "report"), ["report"])
+})
+
+test("toggleKind accumulates checks (multi-select)", () => {
+  assert.deepEqual(core.toggleKind(["report"], "run_log"), ["report", "run_log"])
+})
+
+test("toggleKind unchecking the last kind returns to All", () => {
+  assert.deepEqual(core.toggleKind(["report"], "report"), [])
+  assert.deepEqual(core.toggleKind(["report", "run_log"], "report"), ["run_log"])
+})
+
+test("toggleKind the All row clears the selection", () => {
+  assert.deepEqual(core.toggleKind(["report", "run_log"], "all"), [])
 })
 
 // ----------------------------------------------------------------- navReducer

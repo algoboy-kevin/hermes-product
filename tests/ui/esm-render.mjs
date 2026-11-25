@@ -448,7 +448,9 @@ function fakeServer(options = {}) {
     calls: [],
     failProjects: options.failProjects || "",
     duplicateSlug: options.duplicateSlug || "",
-    decks: { shop: shopDeck(), mobile: mobileDeck() },
+    decks: options.realDecks && REAL.lists
+      ? { shop: { ...shopDeck(), doc: REAL.lists.doc }, mobile: mobileDeck() }
+      : { shop: shopDeck(), mobile: mobileDeck() },
     prd: { ...PRD },
     graphs: { ...GRAPHS },
     real: Boolean(options.real),
@@ -659,24 +661,26 @@ check(tabs().length > 0, "A28: the Docs view carries its status tabs (current|su
 
 // -- the two doc flags on a card ------------------------------------------------
 const byTestId = (id) => all((node) => node && node.props && node.props["data-testid"] === id)
+const hasTestId = (json, id) => json.includes('"data-testid":"' + id + '"')
 const pinNodes = byTestId("card-pin")
 check(pinNodes.length === 1, "flags: exactly one card is pinned (got " + pinNodes.length + ")")
-check((pinNodes[0].props.style || {}).position === "absolute"
-  && (pinNodes[0].props.style || {}).right !== undefined,
+check(String(pinNodes[0].props.className || "").includes("absolute")
+  && String(pinNodes[0].props.className || "").includes("right-"),
   "flags: the pin sits in the card's top-right corner")
 const prdNodes = byTestId("card-prd")
-check(prdNodes.length === 1 && text(prdNodes[0]) === "PRD",
+check(prdNodes.length === 1 && text(prdNodes[0]).trim() === "PRD",
   "flags: one card carries a PRD badge (got " + prdNodes.length + ")")
 check(String((prdNodes[0].props.style || {}).color || "").toLowerCase() === "#eab308",
   "flags: the PRD badge is yellow")
 const docCard = (ref) => JSON.stringify(cards().find((node) => node.props["data-ref"] === ref) || {})
-check(cardRefs()[0] === "DOC1" && cardRefs().indexOf("DOC2") < cardRefs().indexOf("DOC3"),
-  "flags: the pinned document sorts first, the PRD ahead of the rest (got " + cardRefs().join(",") + ")")
-check(docCard("DOC1").includes("card-pin") && !docCard("DOC1").includes("card-prd"),
+check(cardRefs()[0] === "DOC2" && cardRefs()[1] === "DOC1"
+  && cardRefs().indexOf("DOC2") < cardRefs().indexOf("DOC3"),
+  "flags: the PRD sorts first, then the pinned document, ahead of the rest (got " + cardRefs().join(",") + ")")
+check(hasTestId(docCard("DOC1"), "card-pin") && !hasTestId(docCard("DOC1"), "card-prd"),
   "flags: DOC1 is pinned and is not the PRD")
-check(docCard("DOC2").includes("card-prd") && !docCard("DOC2").includes("card-pin"),
+check(hasTestId(docCard("DOC2"), "card-prd") && !hasTestId(docCard("DOC2"), "card-pin"),
   "flags: DOC2 is the PRD and is not pinned")
-check(!docCard("DOC3").includes("card-pin") && !docCard("DOC3").includes("card-prd"),
+check(!hasTestId(docCard("DOC3"), "card-pin") && !hasTestId(docCard("DOC3"), "card-prd"),
   "flags: a plain document carries neither")
 
 // -- focus-bar tallies: the capabilities-tab shape -----------------------------
@@ -1037,6 +1041,93 @@ check(JSON.stringify(tallies()) === JSON.stringify(["requirements=1"]),
   "focus: a view with no cards shows no tally at all (got " + JSON.stringify(tallies()) + ")")
 check(JSON.stringify(tallies()) === JSON.stringify(["requirements=1"]),
   "focus: only the views with cards carry a tally (got " + JSON.stringify(tallies()) + ")")
+
+// =========================================================================== session K
+// -- the Docs kind filter (HP-29), on the deck the REAL list route produced ---------------
+// Rows are the enum kinds (model.DOC_KINDS), counts ride each row; "All" is the default;
+// checks accumulate; the control sits directly after the state tabs (owner, BRIEF v3).
+await open({ realDecks: true })
+const kindItems = () => byId("kind-filter-item")
+const kindItemOf = (kind) => kindItems().find((node) => node.props["data-kind"] === kind)
+check(one("kind-filter") !== undefined, "kind filter: the Docs deck carries the funnel control")
+check(one("kind-filter-all") !== undefined, "kind filter: the popover opens with an All row")
+check(one("kind-filter-all").props["data-checked"] === "1"
+  && JSON.stringify(one("kind-filter-all")).includes('"data-icon":"check"'),
+  "kind filter: All is checked by default, with a check mark")
+check(cardRefs().join(",") === "DOC1,DOC2,DOC3",
+  "kind filter: default shows every doc (got " + cardRefs().join(",") + ")")
+check(kindItems().length === pluginModule.core.DOC_KINDS.length,
+  "kind filter: one row per enum kind (got " + kindItems().length + ")")
+check(kindItems().map((node) => node.props["data-kind"]).join(",") === pluginModule.core.DOC_KINDS.join(","),
+  "kind filter: the rows are the enum kinds in model order")
+check(kindItemOf("report").props["data-count"] === 1
+  && text(kindItemOf("report")).includes("report") && text(kindItemOf("report")).includes("1"),
+  "kind filter: each kind shows its count beside its name")
+check(kindItems().every((node) => node.props["data-checked"] === "0"),
+  "kind filter: no individual kind is checked while All is on")
+
+// DOM order (owner, BRIEF v3): the funnel sits directly after the last state tab
+const flat = nodes()
+const tabIndexes = tabs().map((node) => flat.indexOf(node))
+const kindIndex = flat.indexOf(one("kind-filter"))
+check(kindIndex > Math.max(...tabIndexes),
+  "kind filter: sits after the state tabs in the toolbar row")
+const afterTabs = flat.slice(Math.max(...tabIndexes) + 1)
+  .find((node) => node.props && node.props["data-testid"])
+check(afterTabs && afterTabs.props["data-testid"] === "kind-filter",
+  "kind filter: directly after the last state tab, no control in between")
+
+// checking a kind switches All off and shows only that kind (multi-select)
+await clickNode(kindItemOf("release_notes"), "check release_notes")
+check(cardRefs().join(",") === "DOC2",
+  "kind filter: checking one kind shows only it (got " + cardRefs().join(",") + ")")
+check(one("kind-filter-all").props["data-checked"] === "0",
+  "kind filter: checking a kind switches All off")
+check(kindItemOf("release_notes").props["data-checked"] === "1",
+  "kind filter: the checked kind carries its check mark")
+await clickNode(kindItemOf("run_log"), "check run_log too")
+check(cardRefs().join(",") === "DOC2,DOC3",
+  "kind filter: checks accumulate (multi-select) (got " + cardRefs().join(",") + ")")
+
+// unchecking the last kind returns to All
+await clickNode(kindItemOf("release_notes"), "uncheck release_notes")
+check(cardRefs().join(",") === "DOC3", "kind filter: unchecking one kind keeps the others")
+await clickNode(kindItemOf("run_log"), "uncheck the last kind")
+check(cardRefs().join(",") === "DOC1,DOC2,DOC3"
+  && one("kind-filter-all").props["data-checked"] === "1",
+  "kind filter: unchecking the last kind returns to All")
+
+// the All row clears the selection
+await clickNode(kindItemOf("report"), "check report")
+check(cardRefs().join(",") === "DOC1", "kind filter: one kind checked again")
+await clickNode(one("kind-filter-all"), "click All")
+check(cardRefs().join(",") === "DOC1,DOC2,DOC3"
+  && one("kind-filter-all").props["data-checked"] === "1",
+  "kind filter: the All row clears the selection")
+
+// composition with the state tab; the state-tab counts never move
+const tabCount = (name) => Number(tabOf(name).props["data-count"])
+await clickNode(tabOf("superseded"), "state tab superseded")
+check(cards().length === 0, "kind filter: the state tab still filters first (no superseded docs)")
+await clickNode(tabOf("current"), "state tab current")
+await clickNode(kindItemOf("run_log"), "check run_log under current")
+check(cardRefs().join(",") === "DOC3",
+  "kind filter: composes with the state tab (got " + cardRefs().join(",") + ")")
+check(tabCount("all") === 3 && tabCount("current") === 3 && tabCount("superseded") === 0,
+  "kind filter: the state-tab counts stay unchanged while kinds are checked")
+
+// scope: other decks carry no kind filter; the selection resets on a project switch
+await clickView("requirements")
+check(one("kind-filter") === undefined, "kind filter: only the Docs deck carries it")
+await clickView("docs")
+await clickNode(kindItemOf("report"), "check report before switching project")
+const mobileItem = byId("project-item").find((node) => node.props["data-slug"] === "mobile")
+await clickNode(mobileItem, "switch project")
+const shopItem = byId("project-item").find((node) => node.props["data-slug"] === "shop")
+await clickNode(shopItem, "switch back")
+check(one("kind-filter-all").props["data-checked"] === "1"
+  && cardRefs().join(",") === "DOC1,DOC2,DOC3",
+  "kind filter: the selection is UI state and resets on a project switch")
 
 // --------------------------------------------------------------------------- result
 console.log("checks: " + checks + ", failures: " + failures)

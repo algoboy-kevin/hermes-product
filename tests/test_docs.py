@@ -146,7 +146,7 @@ def test_an_unknown_doc_kind_names_the_allowed_values(home: Path, capsys) -> Non
     rc, _out, err = cli(capsys, "add", "DOC", "--title", "Webhook flow", "--kind",
                         "nope", "--summary", SUMMARY)
     assert rc == 1
-    assert "kind must be one of prd|spec|context|research|design|api|runbook|report|other" in err
+    assert "kind must be one of prd|spec|context|research|design|api|runbook|report|release_notes|run_log|other" in err
 
 
 @pytest.mark.parametrize("title", ["ab", "x" * 81])

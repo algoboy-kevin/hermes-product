@@ -87,6 +87,50 @@
       },
       "ref": "DOC1"
     },
+    "DOC2": {
+      "body_chars": 19,
+      "command": "hermes product set DOC2 key=value",
+      "docs": [],
+      "fields": {
+        "id": 2,
+        "kind": "release_notes",
+        "status": "current",
+        "summary": "Frozen notes for the v0.1 cut.",
+        "title": "v0.1 release notes",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [],
+      "kind": "doc",
+      "links": {
+        "criterion": [],
+        "feature": [],
+        "requirement": [],
+        "spec": []
+      },
+      "ref": "DOC2"
+    },
+    "DOC3": {
+      "body_chars": 24,
+      "command": "hermes product set DOC3 key=value",
+      "docs": [],
+      "fields": {
+        "id": 3,
+        "kind": "run_log",
+        "status": "current",
+        "summary": "What the 2026-11-25 tape-load run did.",
+        "title": "Tape load run",
+        "updated_at": "2026-11-23T12:00:00+00:00"
+      },
+      "history": [],
+      "kind": "doc",
+      "links": {
+        "criterion": [],
+        "feature": [],
+        "requirement": [],
+        "spec": []
+      },
+      "ref": "DOC3"
+    },
     "F1": {
       "body_chars": 0,
       "command": "hermes product set F1 key=value",
@@ -217,6 +261,66 @@
         "requirements": []
       },
       "ref": "S2"
+    }
+  },
+  "lists": {
+    "doc": {
+      "counts": {
+        "all": 3,
+        "current": 3,
+        "superseded": 0
+      },
+      "entries": [
+        {
+          "id": 1,
+          "is_prd": false,
+          "kind": "report",
+          "links": {
+            "criterion": 0,
+            "feature": 0,
+            "requirement": 0,
+            "spec": 1
+          },
+          "pinned": false,
+          "ref": "DOC1",
+          "status": "current",
+          "summary": "What the first run measured.",
+          "title": "Run report"
+        },
+        {
+          "id": 2,
+          "is_prd": false,
+          "kind": "release_notes",
+          "links": {
+            "criterion": 0,
+            "feature": 0,
+            "requirement": 0,
+            "spec": 0
+          },
+          "pinned": false,
+          "ref": "DOC2",
+          "status": "current",
+          "summary": "Frozen notes for the v0.1 cut.",
+          "title": "v0.1 release notes"
+        },
+        {
+          "id": 3,
+          "is_prd": false,
+          "kind": "run_log",
+          "links": {
+            "criterion": 0,
+            "feature": 0,
+            "requirement": 0,
+            "spec": 0
+          },
+          "pinned": false,
+          "ref": "DOC3",
+          "status": "current",
+          "summary": "What the 2026-11-25 tape-load run did.",
+          "title": "Tape load run"
+        }
+      ],
+      "kind": "doc"
     }
   }
 }

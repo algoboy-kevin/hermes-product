@@ -190,6 +190,43 @@ function filterByState(entries, state) {
   return rows.filter((entry) => entry.status === state)
 }
 
+//: the kinds a DOC# may declare — mirrors model.DOC_KINDS (docs/specs/S1-data-model.md §7)
+const DOC_KINDS = ["prd", "spec", "context", "research", "design", "api", "runbook", "report",
+                   "release_notes", "run_log", "other"]
+
+/**
+ * The Docs kind filter (HP-29): an empty selection (or "all") is every row, otherwise
+ * only the checked kinds. Rows carry the doc kind in `kind` (the API's doc cards do).
+ */
+function filterByKind(entries, selectedKinds) {
+  const rows = entries || []
+  const picked = (selectedKinds || []).filter((kind) => kind && kind !== "all")
+  if (!picked.length) return rows.slice()
+  const wanted = new Set(picked)
+  return rows.filter((entry) => wanted.has(entry.kind))
+}
+
+/** {kind: count} over the given rows, for the kind-filter menu's per-kind counts. */
+function kindCounts(entries) {
+  const counts = {}
+  for (const entry of entries || []) {
+    const kind = (entry && entry.kind) || "other"
+    counts[kind] = (counts[kind] || 0) + 1
+  }
+  return counts
+}
+
+/**
+ * The kind-filter check rows' state machine: `[]` is "All"; checking a kind switches All
+ * off and accumulates (multi-select); unchecking the last kind returns to All; the "all"
+ * row clears the selection.
+ */
+function toggleKind(selectedKinds, kind) {
+  const picked = (selectedKinds || []).filter((each) => each && each !== "all")
+  if (!kind || kind === "all") return []
+  return picked.includes(kind) ? picked.filter((each) => each !== kind) : picked.concat([kind])
+}
+
 /** A feature's layer, a requirement's priority: the badges a card footer shows. */
 function linkBadges(kind, links) {
   const source = links || {}
@@ -381,6 +418,10 @@ export const core = {
   sortEntries,
   tabCounts,
   filterByState,
+  DOC_KINDS,
+  filterByKind,
+  kindCounts,
+  toggleKind,
   linkBadges,
   navReducer,
   showStatusTabs,
@@ -529,6 +570,48 @@ function ModeToggle({ value, onChange }) {
         onClick: () => onChange(mode),
         className: chip(value === mode)
       }, h("span", { className: "flex items-center gap-1" }, label))))
+}
+
+/** The Docs kind filter (HP-29): a funnel button opens a popover of check rows. */
+function KindFilter({ kinds, counts, selected, onToggle, onAll }) {
+  const active = (selected || []).filter((kind) => kind && kind !== "all")
+  return h(DropdownMenu, null,
+    h(DropdownMenuTrigger, { asChild: true },
+      h(Button, {
+        size: "xs",
+        variant: "ghost",
+        "data-testid": "kind-filter",
+        "aria-label": "Filter documents by kind",
+        title: "Filter documents by kind",
+        className: "gap-1 text-xs"
+      }, h(Codicon, { name: "filter", size: "0.8rem" }))),
+    h(DropdownMenuContent, { align: "start", className: "min-w-[12rem] p-1" },
+      h(DropdownMenuItem, {
+        "data-testid": "kind-filter-all",
+        "data-checked": active.length === 0 ? "1" : "0",
+        onClick: onAll,
+        className: "flex items-center gap-2 cursor-pointer text-xs py-1.5"
+      },
+        h("span", { className: "flex-1" }, "All"),
+        active.length === 0 ? h(Codicon, { name: "check", size: "0.8rem" }) : null),
+      (kinds || []).map((kind) => {
+        const checked = active.includes(kind)
+        const count = Number((counts && counts[kind]) || 0)
+        return h(DropdownMenuItem, {
+          key: kind,
+          "data-testid": "kind-filter-item",
+          "data-kind": kind,
+          "data-count": count,
+          "data-checked": checked ? "1" : "0",
+          onClick: () => onToggle(kind),
+          className: "flex items-center gap-2 cursor-pointer text-xs py-1.5"
+        },
+          h("span", { className: "flex-1" }, stateLabel(kind)),
+          h("span", {
+            style: { color: UI.quaternary, fontVariantNumeric: "tabular-nums" }
+          }, String(count)),
+          checked ? h(Codicon, { name: "check", size: "0.8rem" }) : null)
+      })))
 }
 
 /** The project switcher, projected into the page header band (A27). */
@@ -1233,6 +1316,7 @@ function ProductPage({ ctx }) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState("")
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [kindSel, setKindSel] = useState([])
 
   const project = nav.project || ""
   const kind = VIEW_KIND[nav.view]
@@ -1326,6 +1410,9 @@ function ProductPage({ ctx }) {
     return () => { alive = false }
   }, [ctx, project, nav.selected])
 
+  // the Docs kind filter is UI state (HP-29): it resets when the project changes
+  useEffect(() => { setKindSel([]) }, [project])
+
   const pickProject = (slug) => {
     if (!slug) return
     if (ctx.storage) ctx.storage.set(STORAGE_KEY, slug)
@@ -1385,7 +1472,7 @@ function ProductPage({ ctx }) {
 
   const order = (states && states[kind]) || STATE_ORDER[kind] || []
   const entries = entryView && entryView.entries ? sortEntries(entryView.entries, order) : []
-  const visible = filterByState(entries, nav.tab)
+  const visible = filterByKind(filterByState(entries, nav.tab), kindSel)
   const derived = tabCounts(entries, order)
   const counts = (entryView && entryView.counts) || { all: derived.all, ...derived.byState }
 
@@ -1487,7 +1574,17 @@ function ProductPage({ ctx }) {
 
       showStatusTabs(nav.view) && project
         ? h("div", { className: "flex flex-wrap items-center gap-2" },
-          h(StatusTabs, { counts, order, tab: nav.tab, onPick: openTab }))
+          h(StatusTabs, { counts, order, tab: nav.tab, onPick: openTab }),
+          // the Docs kind filter (HP-29) sits directly after the state tabs (owner, v3)
+          kind === "doc"
+            ? h(KindFilter, {
+              kinds: DOC_KINDS,
+              counts: kindCounts(entries),
+              selected: kindSel,
+              onToggle: (picked) => setKindSel((current) => toggleKind(current, picked)),
+              onAll: () => setKindSel([])
+            })
+            : null)
         : null,
 
       h("div", { className: "flex min-h-0 flex-1 gap-3" },

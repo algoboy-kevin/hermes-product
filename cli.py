@@ -162,7 +162,7 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     p_add.add_argument("--paths", default=None, help="Code paths, comma separated (F#, S#)")
     p_add.add_argument("--summary", default=None, help="What the spec decides (S#)")
     p_add.add_argument("--kind", dest="doc_kind", default=None, metavar="KIND",
-                       help="prd|spec|context|research|design|api|runbook|report|other (DOC#)")
+                       help="prd|spec|context|research|design|api|runbook|report|release_notes|run_log|other (DOC#)")
     p_add.add_argument("--body", default=None,
                        help="The full text that defines the entry (R#, F#, S#), or the"
                             " document text (DOC#); never A#")
