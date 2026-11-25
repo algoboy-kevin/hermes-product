@@ -24,6 +24,15 @@ from fastapi.testclient import TestClient  # noqa: E402
 import store  # noqa: E402
 
 API_FILE = Path(__file__).resolve().parent.parent / "dashboard" / "plugin_api.py"
+MANIFEST_FILE = Path(__file__).resolve().parent.parent / "plugin.yaml"
+
+
+def _manifest_version() -> str:
+    """The version the package ships (the /info route must never drift from the manifest)."""
+    for line in MANIFEST_FILE.read_text().splitlines():
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError("plugin.yaml carries no version line")
 
 LONG_STATEMENT = (
     "A buyer can pay by card at checkout\nso that the order is placed immediately, "
@@ -161,7 +170,7 @@ def _db() -> Path:
 def test_info_on_an_empty_home_creates_nothing(home: Path) -> None:
     payload = _client().get("/info").json()
     assert payload["plugin"] == "product"
-    assert payload["version"] == "0.0.1"
+    assert payload["version"] == _manifest_version()
     assert payload["db"] == str(home / "hermes-home" / "product" / "product.db")
     assert payload["schema"] == 0
     assert not (home / "hermes-home" / "product").exists()
